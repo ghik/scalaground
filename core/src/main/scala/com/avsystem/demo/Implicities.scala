@@ -135,11 +135,6 @@ object t3 {
       case i: Int => i
     }
 
-  def extract[T](list: List[Any]): List[T] =
-    list.collect {
-      case t: T => t // warning + runtime failure!
-    }
-
   def extract[T](list: List[Any])(implicit ct: ClassTag[T]): List[T] =
     list.collect {
       case t: T => t
