@@ -1,3 +1,5 @@
+package spanish
+
 import java.awt.image.BufferedImage
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream, FileWriter, PrintWriter}
 import java.net.URL
@@ -15,7 +17,6 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.{Document, Element}
 import reactivemongo.api.collections.bson.BSONCollection
 import reactivemongo.api.{MongoDriver, ReadPreference}
-import reactivemongo.bson.Macros.Annotations.Key
 import reactivemongo.bson._
 import upickle.Js
 
@@ -24,76 +25,138 @@ import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.io.{Source, StdIn}
 import scala.util.Random
 
-case class WordData(
-  @Key("_id") word: String,
-  translations: Seq[Translation],
-  added: JDate,
-  seq: Int
-)
-object WordData {
-  implicit val writer: BSONDocumentWriter[WordData] =
-    Macros.writer[WordData]
-  implicit val reader: BSONDocumentReader[WordData] =
-    Macros.reader[WordData]
-}
+trait RegularConjugations {
 
-case class Translation(
-  dict: String,
-  speechPart: String,
-  context: List[String],
-  english: List[String],
-  example: Option[Example],
-  ask: Boolean = false,
-  imageUrl: Option[String] = None
-) {
-  def baseSpeechPart = speechPart.lastIndexOf(' ') match {
-    case -1 => speechPart
-    case idx => speechPart.substring(idx + 1)
+  import Form._
+  import Person._
+
+  def conjugateRegularly(verb: String, form: Form): String = {
+    val baseVerb = verb.stripSuffix("se")
+    val baseConjugated = (form, baseVerb) match {
+      case (Infinitive, _) => verb
+      case (Participle, Ar(stem)) => stem + "ado"
+      case (Participle, ErIr(stem)) => stem + "ido"
+      case (Gerund, Ar(stem)) => stem + "ando"
+      case (Gerund, ErIr(stem)) => stem + "iendo"
+
+      case (IndicativePresent(Yo), Cer(stem)) => stem + "zco"
+      case (IndicativePresent(Yo), ArErIr(stem)) => stem + "o"
+      case (IndicativePresent(Tu), Ar(stem)) => stem + "as"
+      case (IndicativePresent(Tu), ErIr(stem)) => stem + "es"
+      case (IndicativePresent(El), Ar(stem)) => stem + "a"
+      case (IndicativePresent(El), ErIr(stem)) => stem + "e"
+      case (IndicativePresent(Nosotros), Ar(stem)) => stem + "amos"
+      case (IndicativePresent(Nosotros), Er(stem)) => stem + "emos"
+      case (IndicativePresent(Nosotros), Ir(stem)) => stem + "imos"
+      case (IndicativePresent(Vosotros), Ar(stem)) => stem + "áis"
+      case (IndicativePresent(Vosotros), Er(stem)) => stem + "éis"
+      case (IndicativePresent(Vosotros), Ir(stem)) => stem + "ís"
+      case (IndicativePresent(Ellos), Ar(stem)) => stem + "an"
+      case (IndicativePresent(Ellos), ErIr(stem)) => stem + "en"
+
+      case (IndicativePreterite(Yo), Car(stem)) => stem + "qué"
+      case (IndicativePreterite(Yo), Gar(stem)) => stem + "gué"
+      case (IndicativePreterite(Yo), Zar(stem)) => stem + "cé"
+      case (IndicativePreterite(Yo), Ar(stem)) => stem + "é"
+      case (IndicativePreterite(Yo), ErIr(stem)) => stem + "í"
+      case (IndicativePreterite(Tu), Ar(stem)) => stem + "aste"
+      case (IndicativePreterite(Tu), ErIr(stem)) => stem + "iste"
+      case (IndicativePreterite(El), Ar(stem)) => stem + "ó"
+      case (IndicativePreterite(El), ErIr(stem)) => stem + "ió"
+      case (IndicativePreterite(Nosotros), Ar(stem)) => stem + "amos"
+      case (IndicativePreterite(Nosotros), ErIr(stem)) => stem + "imos"
+      case (IndicativePreterite(Vosotros), Ar(stem)) => stem + "asteis"
+      case (IndicativePreterite(Vosotros), ErIr(stem)) => stem + "isteis"
+      case (IndicativePreterite(Ellos), Ar(stem)) => stem + "aron"
+      case (IndicativePreterite(Ellos), ErIr(stem)) => stem + "ieron"
+
+      case (IndicativeImperfect(Yo | El), Ar(stem)) => stem + "aba"
+      case (IndicativeImperfect(Yo | El), ErIr(stem)) => stem + "ía"
+      case (IndicativeImperfect(Tu), Ar(stem)) => stem + "abas"
+      case (IndicativeImperfect(Tu), ErIr(stem)) => stem + "ías"
+      case (IndicativeImperfect(Nosotros), Ar(stem)) => stem + "ábamos"
+      case (IndicativeImperfect(Nosotros), ErIr(stem)) => stem + "íamos"
+      case (IndicativeImperfect(Vosotros), Ar(stem)) => stem + "abais"
+      case (IndicativeImperfect(Vosotros), ErIr(stem)) => stem + "íais"
+      case (IndicativeImperfect(Ellos), Ar(stem)) => stem + "aban"
+      case (IndicativeImperfect(Ellos), ErIr(stem)) => stem + "ían"
+
+      case (IndicativeConditional(Yo | El), v) => v + "ía"
+      case (IndicativeConditional(Tu), v) => v + "ías"
+      case (IndicativeConditional(Nosotros), v) => v + "íamos"
+      case (IndicativeConditional(Vosotros), v) => v + "íais"
+      case (IndicativeConditional(Ellos), v) => v + "ían"
+
+      case (IndicativeFuture(Yo), v) => v + "é"
+      case (IndicativeFuture(Tu), v) => v + "ás"
+      case (IndicativeFuture(El), v) => v + "á"
+      case (IndicativeFuture(Nosotros), v) => v + "emos"
+      case (IndicativeFuture(Vosotros), v) => v + "éis"
+      case (IndicativeFuture(Ellos), v) => v + "án"
+
+      case (SubjunctivePresent(Yo | El), Ar(stem)) => stem + "e"
+      case (SubjunctivePresent(Yo | El), ErIr(stem)) => stem + "a"
+      case (SubjunctivePresent(Tu), Ar(stem)) => stem + "es"
+      case (SubjunctivePresent(Tu), ErIr(stem)) => stem + "as"
+      case (SubjunctivePresent(Nosotros), Ar(stem)) => stem + "emos"
+      case (SubjunctivePresent(Nosotros), ErIr(stem)) => stem + "amos"
+      case (SubjunctivePresent(Vosotros), Ar(stem)) => stem + "éis"
+      case (SubjunctivePresent(Vosotros), ErIr(stem)) => stem + "áis"
+      case (SubjunctivePresent(Ellos), Ar(stem)) => stem + "en"
+      case (SubjunctivePresent(Ellos), ErIr(stem)) => stem + "an"
+
+      case (SubjunctiveImperfect1(Yo | El), Ar(stem)) => stem + "ara"
+      case (SubjunctiveImperfect1(Yo | El), ErIr(stem)) => stem + "iera"
+      case (SubjunctiveImperfect1(Tu), Ar(stem)) => stem + "aras"
+      case (SubjunctiveImperfect1(Tu), ErIr(stem)) => stem + "ieras"
+      case (SubjunctiveImperfect1(Nosotros), Ar(stem)) => stem + "áramos"
+      case (SubjunctiveImperfect1(Nosotros), ErIr(stem)) => stem + "iéramos"
+      case (SubjunctiveImperfect1(Vosotros), Ar(stem)) => stem + "arais"
+      case (SubjunctiveImperfect1(Vosotros), ErIr(stem)) => stem + "ierais"
+      case (SubjunctiveImperfect1(Ellos), Ar(stem)) => stem + "aran"
+      case (SubjunctiveImperfect1(Ellos), ErIr(stem)) => stem + "ieran"
+
+      case (SubjunctiveImperfect2(Yo | El), Ar(stem)) => stem + "ase"
+      case (SubjunctiveImperfect2(Yo | El), ErIr(stem)) => stem + "iese"
+      case (SubjunctiveImperfect2(Tu), Ar(stem)) => stem + "ases"
+      case (SubjunctiveImperfect2(Tu), ErIr(stem)) => stem + "ieses"
+      case (SubjunctiveImperfect2(Nosotros), Ar(stem)) => stem + "ásemos"
+      case (SubjunctiveImperfect2(Nosotros), ErIr(stem)) => stem + "iésemos"
+      case (SubjunctiveImperfect2(Vosotros), Ar(stem)) => stem + "aseis"
+      case (SubjunctiveImperfect2(Vosotros), ErIr(stem)) => stem + "ieseis"
+      case (SubjunctiveImperfect2(Ellos), Ar(stem)) => stem + "asen"
+      case (SubjunctiveImperfect2(Ellos), ErIr(stem)) => stem + "iesen"
+
+      case (Imperative(Tu), v) => conjugateRegularly(v, IndicativePresent(El))
+      case (Imperative(El), v) => conjugateRegularly(v, SubjunctivePresent(El))
+      case (Imperative(Nosotros), v) => conjugateRegularly(v, SubjunctivePresent(Nosotros))
+      case (Imperative(Vosotros), v) => v.stripSuffix("r") + "d"
+      case (Imperative(Ellos), v) => conjugateRegularly(v, SubjunctivePresent(Ellos))
+    }
+    if (verb.endsWith("se")) form match {
+      case pf: PersonalForm =>
+        val pron = pf.person match {
+          case Yo => "me"
+          case Tu => "te"
+          case El => "se"
+          case Nosotros => "nos"
+          case Vosotros => "os"
+          case Ellos => "se"
+        }
+        pron + " " + baseConjugated
+      case _ => baseConjugated
+    }
+    else baseConjugated
   }
-  def articles = speechPart match {
-    case "masculine noun" => List("el")
-    case "feminine noun" => List("la")
-    case "masculine or feminine noun" => List("el", "la")
-    case _ => Nil
-  }
-  def meaningLine = s"From $dict: $speechPart: (${context.mkString(", ")}) ${english.mkString(", ")}"
-}
-case class Example(spanish: String, english: String)
-object Translation {
-  implicit val handler: BSONHandler[BSONDocument, Translation] =
-    Macros.handler[Translation]
-}
-object Example {
-  implicit val handler: BSONHandler[BSONDocument, Example] =
-    Macros.handler[Example]
 }
 
-case class ImageData(url: String, data: Array[Byte])
-
-trait Spanish {
+trait Spanish extends RegularConjugations {
   val ParticipleLabel = "Participle: "
   val VowelStemEndings = Set('a', 'o', 'e')
 
   def participle(verb: String) = {
     val body = Jsoup.connect(s"http://www.spanishdict.com/conjugate/$verb").get.body
     body.getElementsContainingOwnText(ParticipleLabel).get(0).ownText().stripPrefix(ParticipleLabel)
-  }
-
-  abstract class VerbClass(ending: String) {
-    def unapply(verb: String): Option[String] =
-      Some(verb).filter(_.endsWith(ending)).map(_.stripSuffix(ending))
-  }
-
-  object Ar extends VerbClass("ar")
-  object Er extends VerbClass("er")
-  object Ir extends VerbClass("ir")
-
-  def regularParticiple(verb: String) = verb match {
-    case Ar(stem) => stem + "ado"
-    case Er(stem) if VowelStemEndings.contains(stem.last) => stem + "ído"
-    case Er(stem) => stem + "ido"
-    case Ir(stem) if VowelStemEndings.contains(stem.last) => stem + "ído"
-    case Ir(stem) => stem + "ido"
   }
 
   def shuffle[T](arr: Array[T]): Unit = {
@@ -114,6 +177,26 @@ trait Spanish {
     articles.find(a => word.startsWith(a + " ")).toOpt
   def stripArticle(word: String) =
     article(word).map(a => word.stripPrefix(a + " ")).getOrElse(word)
+
+  def isEasyTranslation(english: String, spanish: String) =
+    english == spanish ||
+      english + "o" == spanish ||
+      english + "a" == spanish ||
+      english.stripPrefix("to ") + "ar" == spanish ||
+      english.stripPrefix("to ") + "ir" == spanish ||
+      english.stripPrefix("to ") + "er" == spanish ||
+      english.stripPrefix("to ").replaceFirst("e$", "ar") == spanish ||
+      english.stripPrefix("to ").replaceFirst("e$", "er") == spanish ||
+      english.stripPrefix("to ").replaceFirst("e$", "ir") == spanish ||
+      english.replaceFirst("e$", "o") == spanish ||
+      english.replaceFirst("e$", "a") == spanish ||
+      english.replaceFirst("ty$", "dad") == spanish ||
+      english.replaceFirst("y$", "ia") == spanish ||
+      english.replaceFirst("e$", "ia") == spanish ||
+      english.replaceFirst("tion$", "ción") == spanish ||
+      english.replaceFirst("sion$", "sión") == spanish ||
+      english.replaceFirst("ssion$", "sión") == spanish ||
+      english.replaceFirst("te$", "do") == spanish
 
   def translate(spanish: String) = {
     val doc = Jsoup.connect(s"http://www.spanishdict.com/translate/$spanish").get
@@ -191,6 +274,44 @@ trait Spanish {
     if (first.nonEmpty) first else parseDoc(Jsoup.connect(s"http://www.spanishdict.com/translate/$spanish").get)
   }
 
+  def loadConjugations(verb: String): AllConjugations = {
+    val doc = Jsoup.connect(s"http://www.spanishdict.com/conjugate/${verb.stripSuffix("se")}").get
+
+    val conjugation = doc.getElementsByClass("conjugation").first |> { conj =>
+      conj.getElementById("conjugate-es").opt.getOrElse(conj)
+    }
+    val gerund = conjugation.getElementsContainingOwnText("Gerund:").first.text.trim.stripPrefix("Gerund: ")
+    val participle = conjugation.getElementsContainingOwnText("Participle:").first.text.trim.stripPrefix("Participle: ")
+
+    def parseCard(card: Element): List[Conjugation] =
+      card.getElementsByClass("group").asScala.iterator
+        .map(_.getElementsByClass("conj").asScala.iterator.map(_.text.trim).toList).toList
+        .map { case List(fs, ss, ts, fp, sp, tp) =>
+          if (verb.endsWith("se"))
+            Conjugation(s"me $fs", s"te $ss", s"se $ts", s"nos $fp", s"os $sp", s"se $tp")
+          else
+            Conjugation(fs, ss, ts, fp, sp, tp)
+        }
+
+    val List(indicative, subjunctive, imperatives, perfect, perfectSubjunctive) =
+      conjugation.getElementsByClass("card").asScala.iterator.drop(1).map(parseCard).toList
+
+    val List(indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture) = indicative
+    val List(subjunctivePresent, subjunctiveImperfect, subjunctiveImperfect2, subjunctiveFuture) = subjunctive
+    val List(imperative) = imperatives
+    val List(presentPerfect, preteritePerfect, pastPerfect, conditionalPerfect, futurePerfect) = perfect
+    val List(subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect) = perfectSubjunctive
+
+    AllConjugations(
+      gerund, participle,
+      indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture,
+      subjunctivePresent, subjunctiveImperfect, subjunctiveImperfect2, subjunctiveFuture,
+      imperative,
+      presentPerfect, preteritePerfect, pastPerfect, conditionalPerfect, futurePerfect,
+      subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect
+    )
+  }
+
   def writeTo(file: String, content: String): Unit = {
     val pw = new PrintWriter(new FileWriter(file))
     pw.println(content)
@@ -220,6 +341,21 @@ trait SpanishMongo extends Spanish {
 
   implicit def ec: ExecutionContext = driver.system.dispatcher
   val blockingExecutionContext = ExecutionContext.fromExecutorService(Executors.newCachedThreadPool)
+
+  def allWordData(lastAdded: Boolean): Future[Seq[WordData]] =
+    wordsColl.find(BSONDocument())
+      .sort(BSONDocument("added" -> -1, "seq" -> -1) |> { d =>
+        if (lastAdded) d
+        else BSONDocument("bucket" -> 1, "lastCorrect" -> 1) ++ d
+      })
+      .cursor[WordData](ReadPreference.primary)
+      .collect[Seq]()
+
+  def allVerbData: Future[Seq[WordData]] =
+    wordsColl.find(BSONDocument("conjugations" -> BSONDocument("$exists" -> true)))
+      .sort(BSONDocument("added" -> -1, "seq" -> -1))
+      .cursor[WordData](ReadPreference.primary)
+      .collect[Seq]()
 
   def loadImageData(url: String) =
     Future(ByteStreams.toByteArray(new URL(url).openStream()))(blockingExecutionContext)
@@ -275,6 +411,20 @@ trait SpanishMongo extends Spanish {
     print("choose image: ")
     Some(StdIn.readInt()).filter(i => i > 0 && i <= 5).map(i => imageUrls(i - 1))
   }
+}
+
+object InjectConjugations extends SpanishMongo {
+  def execute() = wordsColl.find(BSONDocument("conjugations" -> BSONDocument("$exists" -> false)))
+    .cursor[WordData](ReadPreference.primary).collect[Seq]()
+    .flatMap { wordDatas =>
+      val verbs = wordDatas.filter(_.translations.exists(_.baseSpeechPart == "verb")).map(_.word)
+      Future.traverse(verbs) { verb =>
+        Thread.sleep(100)
+        println(s"Loading conjugations for $verb")
+        val conjugations = loadConjugations(verb)
+        wordsColl.update(BSONDocument("_id" -> verb), BSONDocument("$set" -> BSONDocument("conjugations" -> conjugations)))
+      }
+    }
 }
 
 object ImageChoiceUI extends JFrame {
@@ -347,7 +497,8 @@ object FixTranslations extends SpanishMongo {
 object Inject extends SpanishMongo {
   def execute() = {
     val words = Source.fromFile("/home/ghik/Dropbox/espaniol/palabrasdb.txt")
-      .getLines().map(_.trim).filter(_.nonEmpty).map(stripArticle).toSeq.distinct
+      .getLines().map(_.trim).filter(_.nonEmpty).filterNot(_.startsWith("--")).map(stripArticle)
+      .toSeq.distinct
 
     def allIds(coll: BSONCollection) =
       coll.find(BSONDocument()).cursor[BSONDocument](ReadPreference.primary).collect[List]()
@@ -368,10 +519,15 @@ object Inject extends SpanishMongo {
         }.mkString("\n"))
         val indicesToAsk = StdIn.readLine("translations to ask for: ").split(",").iterator
           .map(_.trim).filter(_.nonEmpty).map(_.toInt).toSet
-        val translations = rawTranslations.zipWithIndex.map { case (t, i) =>
-          t.copy(ask = indicesToAsk.contains(i + 1))
+        if (indicesToAsk.nonEmpty) {
+          val translations = rawTranslations.zipWithIndex.map { case (t, i) =>
+            t.copy(ask = indicesToAsk.contains(i + 1))
+          }
+          val conjugations = if (translations.exists(_.baseSpeechPart == "verb")) loadConjugations(word).option else None
+          wordsColl.insert(WordData(word, translations, conjugations, now, seq))
+        } else {
+          unknownWordsColl.insert(BSONDocument("_id" -> word))
         }
-        wordsColl.insert(WordData(word, translations, now, seq))
       } else {
         println(s"NO TRANSLATIONS FOR $word FOUND")
         unknownWordsColl.insert(BSONDocument("_id" -> word))
@@ -382,62 +538,9 @@ object Inject extends SpanishMongo {
   }
 }
 
-object Practice extends SpanishMongo {
-  case class State(totalAsked: Int = 0, wrong: Vector[(String, Translation)] = Vector.empty) {
-    def right = copy(totalAsked = totalAsked + 1)
-    def wrong(word: String, question: Translation) =
-      copy(totalAsked = totalAsked + 1, wrong = wrong :+(word, question))
-  }
-
-  def execute() = {
-    print(s"Cuántos palabras recientes vas a practicar? ")
-    val count = StdIn.readInt()
-
-    wordsColl.find(BSONDocument()).sort(BSONDocument("added" -> -1, "seq" -> -1))
-      .cursor[WordData](ReadPreference.primary)
-      .collect[Seq]()
-      .map { wordDatas =>
-        val translationsByWord = wordDatas.map {
-          case WordData(word, allTranslations, _, _) => (word, allTranslations)
-        }.toMap
-        val rand = new Random
-        val questions = wordDatas.iterator.take(count).flatMap {
-          case WordData(word, translations, _, _) =>
-            translations.filter(_.ask).opt.filter(_.nonEmpty).map(ts => (word, ts(rand.nextInt(ts.size))))
-        }.toArray
-        shuffle(questions)
-        def loop(totalCount: Int, state: State, questions: List[(String, Translation)]): State = {
-          def wrongQuestionsToRepeat = {
-            val State(total, wrong) = state
-            println(s"Has practicando $total palabras, ${wrong.size} incorrecto (${(total - wrong.size) * 100.0 / total}%)")
-            val newQuestions = state.wrong.toArray
-            shuffle(newQuestions)
-            newQuestions.toList
-          }
-
-          questions match {
-            case (word, qt) :: rest =>
-              StdIn.readLine(s"(${state.totalAsked + 1}/$totalCount) ${qt.speechPart}: (${qt.context.mkString(", ")}) ${qt.english.mkString(", ")} ") match {
-                case "." => loop(wrongQuestionsToRepeat.size, State(), wrongQuestionsToRepeat)
-                case `word` =>
-                  println(s"sí")
-                  loop(totalCount, state.right, rest)
-                case answer if translationsByWord.getOrElse(answer, Nil)
-                  .exists(t => t.english == qt.english && t.speechPart == qt.speechPart) =>
-                  println(s"sí, pero...")
-                  loop(totalCount, state, questions)
-                case answer =>
-                  println(s"no: $word")
-                  loop(totalCount, state.wrong(word, qt), rest)
-              }
-            case Nil if state.wrong.nonEmpty =>
-              loop(wrongQuestionsToRepeat.size, State(), wrongQuestionsToRepeat)
-            case _ =>
-              state
-          }
-        }
-
-        loop(questions.length, State(), questions.toList)
-      }
-  }
+object CleanUp extends SpanishMongo {
+  def execute() = for {
+    allWords <- wordsColl.find(BSONDocument()).cursor[WordData](ReadPreference.primary).collect[List]()
+    deletions <- Future.traverse(allWords.filter(_.translations.forall(!_.ask)))(wd => wordsColl.remove(BSONDocument("_id" -> wd.word)))
+  } yield ()
 }
