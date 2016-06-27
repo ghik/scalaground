@@ -3,7 +3,7 @@ version in ThisBuild := "1.0"
 scalaVersion in ThisBuild := "2.11.8"
 
 lazy val root = project.in(file("."))
-  .aggregate(macros, core, noinfer)
+  .aggregate(macros, core)
 
 lazy val macros = project.settings(
   libraryDependencies += "org.scala-lang" % "scala-reflect" % scalaVersion.value
@@ -24,12 +24,5 @@ lazy val core = project.dependsOn(macros).settings(
     "com.lihaoyi" %% "pprint" % "0.4.0",
     "com.lihaoyi" %% "upickle" % "0.4.0",
     "org.imgscalr" % "imgscalr-lib" % "4.2"
-  )
-)
-
-lazy val noinfer = project.dependsOn(macros, core % Test).settings(
-  libraryDependencies ++= Seq(
-    "org.scala-lang" % "scala-compiler" % scalaVersion.value,
-    "org.scalatest" %% "scalatest" % "2.2.6" % Test
   )
 )
