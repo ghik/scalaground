@@ -169,8 +169,8 @@ object PracticeWords extends Practice {
       shuffle(questions)
 
       def loop(
+        round: Int,
         totalCount: Int,
-        reward: Int,
         state: State[ChosenTranslation],
         questions: List[(String, ChosenTranslation)]): State[ChosenTranslation] = {
 
@@ -185,31 +185,33 @@ object PracticeWords extends Practice {
         questions match {
           case (word, ChosenTranslation(wd, qt)) :: rest =>
             StdIn.readLine(s"(${state.totalAsked + 1}/$totalCount) ${qt.speechPart}: (${qt.context.mkString(", ")}) ${qt.english.mkString(", ")} ") match {
-              case "." => loop(wrongQuestionsToRepeat.size, (reward - 1) max 0, State(), wrongQuestionsToRepeat)
+              case "." => loop(round, wrongQuestionsToRepeat.size, State(), wrongQuestionsToRepeat)
               case `word` =>
                 println(s"sí")
                 val now = new JDate
-                val minBucketIncreaseDate = DateUtils.addDays(wd.lastCorrect.getOrElse(new JDate(0)), 1)
-                val newBucket = if(wd.bucket < 5 && now.after(minBucketIncreaseDate)) wd.bucket + reward else wd.bucket
+                val minBucketIncreaseDate = DateUtils.addHours(wd.lastCorrect.getOrElse(now), 6)
+                val newBucket =
+                  if (round == 0 && wd.bucket < 5 && now.after(minBucketIncreaseDate)) wd.bucket + 1
+                  else wd.bucket
                 wordsColl.update(BSONDocument("_id" -> word), BSONDocument(
                   "$set" -> BSONDocument("lastCorrect" -> now, "bucket" -> newBucket),
                   "$inc" -> BSONDocument("correctCount" -> 1)
                 ))
-                loop(totalCount, reward, state.right, rest)
+                loop(round, totalCount, state.right, rest)
               case answer if translationsByWord.getOrElse(answer, Nil)
                 .exists(t => t.english == qt.english && t.speechPart == qt.speechPart) =>
                 println(s"sí, pero...")
-                loop(totalCount, reward, state, questions)
+                loop(round, totalCount, state, questions)
               case answer =>
                 println(s"no: $word")
                 wordsColl.update(BSONDocument("_id" -> word), BSONDocument(
-                  "$set" -> BSONDocument("lastIncorrect" -> new JDate, "bucket" -> 0),
+                  "$set" -> BSONDocument("lastIncorrect" -> new JDate, "bucket" -> (0 max (wd.bucket - 1))),
                   "$inc" -> BSONDocument("incorrectCount" -> 1)
                 ))
-                loop(totalCount, reward, state.wrong(word, ChosenTranslation(wd, qt)), rest)
+                loop(round, totalCount, state.wrong(word, ChosenTranslation(wd, qt)), rest)
             }
           case Nil if state.wrong.nonEmpty =>
-            loop(wrongQuestionsToRepeat.size, (reward - 1) max 0, State(), wrongQuestionsToRepeat)
+            loop(round + 1, wrongQuestionsToRepeat.size, State(), wrongQuestionsToRepeat)
           case _ =>
             state
         }
