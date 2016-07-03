@@ -189,7 +189,7 @@ object PracticeWords extends Practice {
               case `word` =>
                 println(s"sí")
                 val now = new JDate
-                val minBucketIncreaseDate = DateUtils.addHours(wd.lastCorrect.getOrElse(now), 6)
+                val minBucketIncreaseDate = DateUtils.addHours(wd.lastCorrect.getOrElse(now), 1)
                 val newBucket =
                   if (round == 0 && wd.bucket < 5 && now.after(minBucketIncreaseDate)) wd.bucket + 1
                   else wd.bucket
@@ -199,7 +199,7 @@ object PracticeWords extends Practice {
                 ))
                 loop(round, totalCount, state.right, rest)
               case answer if translationsByWord.getOrElse(answer, Nil)
-                .exists(t => t.english == qt.english && t.speechPart == qt.speechPart) =>
+                .exists(t => t.english == qt.english && t.baseSpeechPart == qt.baseSpeechPart) =>
                 println(s"sí, pero...")
                 loop(round, totalCount, state, questions)
               case answer =>
@@ -217,7 +217,7 @@ object PracticeWords extends Practice {
         }
       }
 
-      loop(questions.length, 1, State(), questions.toList)
+      loop(0, questions.length, State(), questions.toList)
     }
   }
 }

@@ -2,7 +2,7 @@ package spanish
 
 import java.awt.image.BufferedImage
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream, FileWriter, PrintWriter}
-import java.net.URL
+import java.net.{URL, URLEncoder}
 import java.util.concurrent.Executors
 import javax.imageio.ImageIO
 import javax.swing._
@@ -208,7 +208,7 @@ trait Spanish extends RegularConjugations {
   def englishMeanings(spanish: String) = {
     def entryTitleElements(entryTitle: Element) =
       Iterator.iterate(entryTitle)(_.nextElementSibling).drop(1)
-        .takeWhile(s => s != null && !s.classNames.contains("dictionary-neodict-entry-title"))
+        .takeWhile(s => s != null && !s.classNames.asScala.exists(_.contains("-entry-title")))
 
     def extractContexts(el: Element) =
       el.children.iterator.asScala.filter(_.classNames.contains("context"))
@@ -270,8 +270,9 @@ trait Spanish extends RegularConjugations {
       (parseEntries("neodict") ++ parseEntries("neoharrap")).toList
     }
 
-    val first = parseDoc(Jsoup.connect(s"http://www.spanishdict.com/translate/el $spanish").get)
-    if (first.nonEmpty) first else parseDoc(Jsoup.connect(s"http://www.spanishdict.com/translate/$spanish").get)
+    val escapedSpanish = URLEncoder.encode(spanish, "UTF-8")
+    val first = parseDoc(Jsoup.connect(s"http://www.spanishdict.com/translate/el $escapedSpanish").get)
+    if (first.nonEmpty) first else parseDoc(Jsoup.connect(s"http://www.spanishdict.com/translate/$escapedSpanish").get)
   }
 
   def loadConjugations(verb: String): AllConjugations = {
@@ -543,4 +544,10 @@ object CleanUp extends SpanishMongo {
     allWords <- wordsColl.find(BSONDocument()).cursor[WordData](ReadPreference.primary).collect[List]()
     deletions <- Future.traverse(allWords.filter(_.translations.forall(!_.ask)))(wd => wordsColl.remove(BSONDocument("_id" -> wd.word)))
   } yield ()
+}
+
+object ParsingTest extends Spanish {
+  def main(args: Array[String]) {
+    englishMeanings("característico").foreach(println)
+  }
 }
