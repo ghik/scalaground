@@ -1,6 +1,7 @@
 name in ThisBuild := "scalaground"
 version in ThisBuild := "1.0"
 scalaVersion in ThisBuild := "2.11.8"
+resolvers in ThisBuild += Resolver.sonatypeRepo("releases")
 
 lazy val scalaground = project.in(file("."))
   .aggregate(macros, core)
@@ -11,6 +12,7 @@ lazy val macros = project.settings(
 
 lazy val core = project.dependsOn(macros).settings(
   libraryDependencies ++= Seq(
+    compilerPlugin("org.spire-math" %% "kind-projector" % "0.8.0"),
     "org.scala-lang" % "scala-reflect" % scalaVersion.value,
     "org.scala-lang" % "scala-compiler" % scalaVersion.value,
 
@@ -23,6 +25,8 @@ lazy val core = project.dependsOn(macros).settings(
     "org.slf4j" % "slf4j-api" % "1.7.21",
     "com.lihaoyi" %% "pprint" % "0.4.0",
     "com.lihaoyi" %% "upickle" % "0.4.0",
-    "org.imgscalr" % "imgscalr-lib" % "4.2"
+    "org.imgscalr" % "imgscalr-lib" % "4.2",
+    "org.typelevel" %% "cats-core" % "0.6.0",
+    "org.scalatest" %% "scalatest" % "2.2.6" % Test
   )
 )

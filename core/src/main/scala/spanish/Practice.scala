@@ -6,6 +6,7 @@ import org.apache.commons.lang3.time.DateUtils
 import reactivemongo.bson.BSONDocument
 import spanish.Form._
 
+import scala.collection.mutable.ArrayBuffer
 import scala.io.StdIn
 import scala.util.Random
 
@@ -93,7 +94,7 @@ object PracticeArticles extends Practice {
       case _ => false
     }
 
-    allWordData(lastAdded = true).map { wordDatas =>
+    fetchWords(bson("bucket" -> 1, "randomizer" -> 1)).map { wordDatas =>
       val article: PartialFunction[String, String] = {
         case "masculine noun" => "el"
         case "feminine noun" => "la"
@@ -147,26 +148,37 @@ object PracticeArticles extends Practice {
 }
 
 object PracticeWords extends Practice {
+  val minIntervalHours = 2
+  val bucketChange = 1
+  val sort = bson("bucket" -> 1, "lastCorrect" -> 1)
+
   case class ChosenTranslation(wd: WordData, translation: Translation)
 
   def execute() = {
-    print(s"Vas a practicar las palabras que fueron añadido recientemente? ")
-    val lastAdded = StdIn.readChar() == 'y'
     print(s"Cuántos palabras vas a practicar? ")
     val count = StdIn.readInt()
 
-    allWordData(lastAdded).map { wordDatas =>
+    fetchWords(sort).map { wordDatas =>
       val translationsByWord = wordDatas.map(wd => (wd.word, wd.translations)).toMap
       val rand = new Random
-      val questions = wordDatas.iterator.take(count).flatMap { wd =>
+      val maxLastCorrect = DateUtils.addHours(new JDate, -minIntervalHours)
+      val questions = wordDatas.iterator.filter {
+        wd => wd.lastCorrect.forall(_.before(maxLastCorrect))
+      }.flatMap { wd =>
         val word = wd.word
         val translations = wd.translations
         // t.english.exists(isEasyTranslation(_, word))
         translations.filter(t => t.ask && t.english.nonEmpty)
           .opt.filter(_.nonEmpty)
           .map(ts => (word, ChosenTranslation(wd, ts(rand.nextInt(ts.size)))))
-      }.toArray
+      }.take(count).toArray
       shuffle(questions)
+
+      val bucketStats = questions.iterator.map(_._2.wd.bucket)
+        .foldLeft(ArrayBuffer.fill(5)(0)) {
+          case (acc, b) => acc(b) += 1; acc
+        }
+      println(s"Bucket statistics: ${bucketStats.mkString(",")}")
 
       def loop(
         round: Int,
@@ -189,9 +201,8 @@ object PracticeWords extends Practice {
               case `word` =>
                 println(s"sí")
                 val now = new JDate
-                val minBucketIncreaseDate = DateUtils.addHours(wd.lastCorrect.getOrElse(now), 1)
                 val newBucket =
-                  if (round == 0 && wd.bucket < 5 && now.after(minBucketIncreaseDate)) wd.bucket + 1
+                  if (round == 0 && wd.bucket < 4) wd.bucket + bucketChange
                   else wd.bucket
                 wordsColl.update(BSONDocument("_id" -> word), BSONDocument(
                   "$set" -> BSONDocument("lastCorrect" -> now, "bucket" -> newBucket),
@@ -204,11 +215,12 @@ object PracticeWords extends Practice {
                 loop(round, totalCount, state, questions)
               case answer =>
                 println(s"no: $word")
+                val newBucket = 0 max (wd.bucket - bucketChange)
                 wordsColl.update(BSONDocument("_id" -> word), BSONDocument(
-                  "$set" -> BSONDocument("lastIncorrect" -> new JDate, "bucket" -> (0 max (wd.bucket - 1))),
+                  "$set" -> BSONDocument("lastIncorrect" -> new JDate, "bucket" -> newBucket),
                   "$inc" -> BSONDocument("incorrectCount" -> 1)
                 ))
-                loop(round, totalCount, state.wrong(word, ChosenTranslation(wd, qt)), rest)
+                loop(round, totalCount, state.wrong(word, ChosenTranslation(wd.copy(bucket = newBucket), qt)), rest)
             }
           case Nil if state.wrong.nonEmpty =>
             loop(round + 1, wrongQuestionsToRepeat.size, State(), wrongQuestionsToRepeat)

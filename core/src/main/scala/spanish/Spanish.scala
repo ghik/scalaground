@@ -20,6 +20,7 @@ import reactivemongo.api.{MongoDriver, ReadPreference}
 import reactivemongo.bson._
 import upickle.Js
 
+import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.io.{Source, StdIn}
@@ -198,13 +199,6 @@ trait Spanish extends RegularConjugations {
       english.replaceFirst("ssion$", "sión") == spanish ||
       english.replaceFirst("te$", "do") == spanish
 
-  def translate(spanish: String) = {
-    val doc = Jsoup.connect(s"http://www.spanishdict.com/translate/$spanish").get
-    doc.body.getElementById("translate-en").opt.getOrElse(doc.body)
-      .getElementsByClass("quicktrans-es").opt.filterNot(_.isEmpty)
-      .map(_.first.text.filter(_ <= 127).split(",").map(_.trim).toList)
-  }
-
   def englishMeanings(spanish: String) = {
     def entryTitleElements(entryTitle: Element) =
       Iterator.iterate(entryTitle)(_.nextElementSibling).drop(1)
@@ -271,46 +265,54 @@ trait Spanish extends RegularConjugations {
     }
 
     val escapedSpanish = URLEncoder.encode(spanish, "UTF-8")
-    val first = parseDoc(Jsoup.connect(s"http://www.spanishdict.com/translate/el $escapedSpanish").get)
-    if (first.nonEmpty) first else parseDoc(Jsoup.connect(s"http://www.spanishdict.com/translate/$escapedSpanish").get)
+    val variants = ListBuffer(s"el $escapedSpanish", escapedSpanish)
+    if (escapedSpanish.endsWith("se")) {
+      variants += escapedSpanish.stripSuffix("se")
+    }
+
+    variants.toStream
+      .map(variant => parseDoc(Jsoup.connect(s"http://www.spanishdict.com/translate/$variant").get))
+      .find(_.nonEmpty).getOrElse(Nil)
   }
 
-  def loadConjugations(verb: String): AllConjugations = {
-    val doc = Jsoup.connect(s"http://www.spanishdict.com/conjugate/${verb.stripSuffix("se")}").get
+  def loadConjugations(verb: String): Opt[AllConjugations] = {
+    val doc = Jsoup.connect(s"http://www.spanishdict.com/conjugate/${URLEncoder.encode(verb, "UTF-8").stripSuffix("se")}").get
 
-    val conjugation = doc.getElementsByClass("conjugation").first |> { conj =>
+    val conjElem = doc.getElementsByClass("conjugation").first.opt.map { conj =>
       conj.getElementById("conjugate-es").opt.getOrElse(conj)
     }
-    val gerund = conjugation.getElementsContainingOwnText("Gerund:").first.text.trim.stripPrefix("Gerund: ")
-    val participle = conjugation.getElementsContainingOwnText("Participle:").first.text.trim.stripPrefix("Participle: ")
+    conjElem.map { conjugation =>
+      val gerund = conjugation.getElementsContainingOwnText("Gerund:").first.text.trim.stripPrefix("Gerund: ")
+      val participle = conjugation.getElementsContainingOwnText("Participle:").first.text.trim.stripPrefix("Participle: ")
 
-    def parseCard(card: Element): List[Conjugation] =
-      card.getElementsByClass("group").asScala.iterator
-        .map(_.getElementsByClass("conj").asScala.iterator.map(_.text.trim).toList).toList
-        .map { case List(fs, ss, ts, fp, sp, tp) =>
-          if (verb.endsWith("se"))
-            Conjugation(s"me $fs", s"te $ss", s"se $ts", s"nos $fp", s"os $sp", s"se $tp")
-          else
-            Conjugation(fs, ss, ts, fp, sp, tp)
-        }
+      def parseCard(card: Element): List[Conjugation] =
+        card.getElementsByClass("group").asScala.iterator
+          .map(_.getElementsByClass("conj").asScala.iterator.map(_.text.trim).toList).toList
+          .map { case List(fs, ss, ts, fp, sp, tp) =>
+            if (verb.endsWith("se"))
+              Conjugation(s"me $fs", s"te $ss", s"se $ts", s"nos $fp", s"os $sp", s"se $tp")
+            else
+              Conjugation(fs, ss, ts, fp, sp, tp)
+          }
 
-    val List(indicative, subjunctive, imperatives, perfect, perfectSubjunctive) =
-      conjugation.getElementsByClass("card").asScala.iterator.drop(1).map(parseCard).toList
+      val List(indicative, subjunctive, imperatives, perfect, perfectSubjunctive) =
+        conjugation.getElementsByClass("card").asScala.iterator.drop(1).map(parseCard).toList
 
-    val List(indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture) = indicative
-    val List(subjunctivePresent, subjunctiveImperfect, subjunctiveImperfect2, subjunctiveFuture) = subjunctive
-    val List(imperative) = imperatives
-    val List(presentPerfect, preteritePerfect, pastPerfect, conditionalPerfect, futurePerfect) = perfect
-    val List(subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect) = perfectSubjunctive
+      val List(indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture) = indicative
+      val List(subjunctivePresent, subjunctiveImperfect, subjunctiveImperfect2, subjunctiveFuture) = subjunctive
+      val List(imperative) = imperatives
+      val List(presentPerfect, preteritePerfect, pastPerfect, conditionalPerfect, futurePerfect) = perfect
+      val List(subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect) = perfectSubjunctive
 
-    AllConjugations(
-      gerund, participle,
-      indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture,
-      subjunctivePresent, subjunctiveImperfect, subjunctiveImperfect2, subjunctiveFuture,
-      imperative,
-      presentPerfect, preteritePerfect, pastPerfect, conditionalPerfect, futurePerfect,
-      subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect
-    )
+      AllConjugations(
+        gerund, participle,
+        indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture,
+        subjunctivePresent, subjunctiveImperfect, subjunctiveImperfect2, subjunctiveFuture,
+        imperative,
+        presentPerfect, preteritePerfect, pastPerfect, conditionalPerfect, futurePerfect,
+        subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect
+      )
+    }
   }
 
   def writeTo(file: String, content: String): Unit = {
@@ -343,18 +345,18 @@ trait SpanishMongo extends Spanish {
   implicit def ec: ExecutionContext = driver.system.dispatcher
   val blockingExecutionContext = ExecutionContext.fromExecutorService(Executors.newCachedThreadPool)
 
-  def allWordData(lastAdded: Boolean): Future[Seq[WordData]] =
-    wordsColl.find(BSONDocument())
-      .sort(BSONDocument("added" -> -1, "seq" -> -1) |> { d =>
-        if (lastAdded) d
-        else BSONDocument("bucket" -> 1, "lastCorrect" -> 1) ++ d
-      })
+  def bson(elements: Producer[(String, BSONValue)]*) = BSONDocument(elements: _*)
+  def bsonArr(elements: Producer[BSONValue]*) = BSONArray(elements: _*)
+
+  def fetchWords(sort: BSONDocument): Future[Seq[WordData]] = {
+    wordsColl.find(bson()).sort(sort)
       .cursor[WordData](ReadPreference.primary)
       .collect[Seq]()
+  }
 
   def allVerbData: Future[Seq[WordData]] =
-    wordsColl.find(BSONDocument("conjugations" -> BSONDocument("$exists" -> true)))
-      .sort(BSONDocument("added" -> -1, "seq" -> -1))
+    wordsColl.find(bson("conjugations" -> bson("$exists" -> true)))
+      .sort(bson("added" -> -1, "seq" -> -1))
       .cursor[WordData](ReadPreference.primary)
       .collect[Seq]()
 
@@ -366,11 +368,11 @@ trait SpanishMongo extends Spanish {
   def execute(): Future[_]
 
   def imageDataFor(url: String): Future[Option[Array[Byte]]] =
-    imageData.find(BSONDocument("_id" -> url)).one[BSONDocument].flatMap {
+    imageData.find(bson("_id" -> url)).one[BSONDocument].flatMap {
       case Some(bson) => Future.successful(bson.getAs[Array[Byte]]("imageData"))
       case None => for {
         result <- loadImageData(url)
-        _ = imageData.insert(BSONDocument("_id" -> url, "imageData" -> result))
+        _ = imageData.insert(bson("_id" -> url, "imageData" -> result))
       } yield result
     }
 
@@ -415,15 +417,15 @@ trait SpanishMongo extends Spanish {
 }
 
 object InjectConjugations extends SpanishMongo {
-  def execute() = wordsColl.find(BSONDocument("conjugations" -> BSONDocument("$exists" -> false)))
+  def execute() = wordsColl.find(bson("conjugations" -> bson("$exists" -> false)))
     .cursor[WordData](ReadPreference.primary).collect[Seq]()
     .flatMap { wordDatas =>
       val verbs = wordDatas.filter(_.translations.exists(_.baseSpeechPart == "verb")).map(_.word)
       Future.traverse(verbs) { verb =>
         Thread.sleep(100)
         println(s"Loading conjugations for $verb")
-        val conjugations = loadConjugations(verb)
-        wordsColl.update(BSONDocument("_id" -> verb), BSONDocument("$set" -> BSONDocument("conjugations" -> conjugations)))
+        val conjugations = loadConjugations(verb).toOption
+        wordsColl.update(bson("_id" -> verb), bson("$set" -> bson("conjugations" -> conjugations)))
       }
     }
 }
@@ -459,7 +461,7 @@ object ImageChoiceUI extends JFrame {
 object ChooseImages extends SpanishMongo {
   def execute() = {
     invokeUI(ImageChoiceUI.setVisible(true))
-    wordsColl.find(BSONDocument("imagesToShow" -> BSONDocument("$exists" -> false)))
+    wordsColl.find(bson("imagesToShow" -> bson("$exists" -> false)))
       .cursor[BSONDocument](ReadPreference.primary).collect[List]()
       .flatMap { docs =>
         Future.traverse(docs) { doc =>
@@ -472,8 +474,8 @@ object ChooseImages extends SpanishMongo {
                 t.copy(imageUrl = chooseImage(imageUrls))
               } else t
             }
-          wordsColl.update(BSONDocument("_id" -> word),
-            BSONDocument("$set" -> BSONDocument("translations" -> translations)))
+          wordsColl.update(bson("_id" -> word),
+            bson("$set" -> bson("translations" -> translations)))
         }
       }
   }
@@ -481,14 +483,14 @@ object ChooseImages extends SpanishMongo {
 
 object FixTranslations extends SpanishMongo {
   def execute() = {
-    wordsColl.find(BSONDocument("translationsToAsk" -> BSONDocument("$exists" -> true)))
+    wordsColl.find(bson("translationsToAsk" -> bson("$exists" -> true)))
       .cursor[BSONDocument](ReadPreference.primary).collect[List]()
       .flatMap { docs =>
         Future.traverse(docs) { doc =>
           val word = doc.getAs[String]("_id").get
           val translations = doc.getAs[Seq[Translation]]("translations").get
-          wordsColl.update(BSONDocument("_id" -> word), BSONDocument(
-            "$set" -> BSONDocument("translations" -> translations)
+          wordsColl.update(bson("_id" -> word), bson(
+            "$set" -> bson("translations" -> translations)
           ))
         }
       }
@@ -502,7 +504,7 @@ object Inject extends SpanishMongo {
       .toSeq.distinct
 
     def allIds(coll: BSONCollection) =
-      coll.find(BSONDocument()).cursor[BSONDocument](ReadPreference.primary).collect[List]()
+      coll.find(bson()).cursor[BSONDocument](ReadPreference.primary).collect[List]()
         .map(_.iterator.map(_.getAs[String]("_id").get).toSet)
 
     val alreadyPresent = Await.result(for {
@@ -524,14 +526,17 @@ object Inject extends SpanishMongo {
           val translations = rawTranslations.zipWithIndex.map { case (t, i) =>
             t.copy(ask = indicesToAsk.contains(i + 1))
           }
-          val conjugations = if (translations.exists(_.baseSpeechPart == "verb")) loadConjugations(word).option else None
+          val conjugations =
+            if (translations.exists(_.baseSpeechPart == "verb"))
+              loadConjugations(word).toOption
+            else None
           wordsColl.insert(WordData(word, translations, conjugations, now, seq))
         } else {
-          unknownWordsColl.insert(BSONDocument("_id" -> word))
+          unknownWordsColl.insert(bson("_id" -> word))
         }
       } else {
         println(s"NO TRANSLATIONS FOR $word FOUND")
-        unknownWordsColl.insert(BSONDocument("_id" -> word))
+        unknownWordsColl.insert(bson("_id" -> word))
       }
     }
 
@@ -541,8 +546,8 @@ object Inject extends SpanishMongo {
 
 object CleanUp extends SpanishMongo {
   def execute() = for {
-    allWords <- wordsColl.find(BSONDocument()).cursor[WordData](ReadPreference.primary).collect[List]()
-    deletions <- Future.traverse(allWords.filter(_.translations.forall(!_.ask)))(wd => wordsColl.remove(BSONDocument("_id" -> wd.word)))
+    allWords <- wordsColl.find(bson()).cursor[WordData](ReadPreference.primary).collect[List]()
+    deletions <- Future.traverse(allWords.filter(_.translations.forall(!_.ask)))(wd => wordsColl.remove(bson("_id" -> wd.word)))
   } yield ()
 }
 

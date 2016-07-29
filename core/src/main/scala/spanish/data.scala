@@ -12,6 +12,7 @@ case class WordData(
   conjugations: Option[AllConjugations],
   added: JDate,
   seq: Int,
+  randomizer: Int = (math.random * 10000).toInt,
   bucket: Int = 0,
   correctCount: Int = 0,
   incorrectCount: Int = 0,
