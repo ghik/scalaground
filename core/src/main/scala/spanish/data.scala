@@ -6,19 +6,31 @@ import com.avsystem.commons.misc.Opt
 import reactivemongo.bson.Macros.Annotations.Key
 import reactivemongo.bson.{BSONDocument, BSONDocumentReader, BSONDocumentWriter, BSONHandler, Macros}
 
+case class WrDoc(
+  @Key("_id") word: String,
+  doc: String
+)
+object WrDoc {
+  implicit val writer: BSONDocumentWriter[WrDoc] =
+    Macros.writer[WrDoc]
+  implicit val reader: BSONDocumentReader[WrDoc] =
+    Macros.reader[WrDoc]
+}
+
 case class WordData(
   @Key("_id") word: String,
   translations: Seq[Translation],
   conjugations: Option[AllConjugations],
   added: JDate,
   seq: Int,
-  randomizer: Int = (math.random * 10000).toInt,
   bucket: Int = 0,
   correctCount: Int = 0,
   incorrectCount: Int = 0,
   lastCorrect: Option[JDate] = None,
   lastIncorrect: Option[JDate] = None
-)
+) {
+  val randomizer = math.random
+}
 object WordData {
   implicit val writer: BSONDocumentWriter[WordData] =
     Macros.writer[WordData]
@@ -45,7 +57,10 @@ case class Translation(
     case "masculine or feminine noun" => List("el", "la")
     case _ => Nil
   }
-  def meaningLine = s"From $dict: $speechPart: (${context.mkString(", ")}) ${english.mkString(", ")}"
+  def meaningLine = {
+    val meanings = english.map(e => if (dict == "neodict") e.yellow else e.blue).mkString(", ")
+    s"From $dict: $speechPart: (${context.mkString(", ")}) $meanings"
+  }
 }
 case class Example(spanish: String, english: String)
 object Translation {

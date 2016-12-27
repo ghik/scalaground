@@ -14,7 +14,7 @@ trait Practice extends SpanishMongo {
   case class State[T](totalAsked: Int = 0, wrong: Vector[(String, T)] = Vector.empty) {
     def right: State[T] = copy(totalAsked = totalAsked + 1)
     def wrong(word: String, question: T): State[T] =
-      copy(totalAsked = totalAsked + 1, wrong = wrong :+(word, question))
+      copy(totalAsked = totalAsked + 1, wrong = wrong :+ (word, question))
   }
 }
 
@@ -70,7 +70,7 @@ object PracticeConjugation extends Practice {
                 println(s"sí$also")
                 loop(totalCount, state.right, rest)
               case answer =>
-                println(s"no: ${expectedAnswers.mkString(", ")}")
+                println(s"${"NO".red}: ${expectedAnswers.mkString(", ")}")
                 loop(totalCount, state.wrong(question, expectedAnswers), rest)
             }
           case Nil if state.wrong.nonEmpty =>
@@ -94,7 +94,7 @@ object PracticeArticles extends Practice {
       case _ => false
     }
 
-    fetchWords(bson("bucket" -> 1, "randomizer" -> 1)).map { wordDatas =>
+    fetchWords().map { wordDatas =>
       val article: PartialFunction[String, String] = {
         case "masculine noun" => "el"
         case "feminine noun" => "la"
@@ -132,7 +132,7 @@ object PracticeArticles extends Practice {
                 println(s"sí, pero...")
                 loop(totalCount, state, questions)
               case answer =>
-                println(s"no: $expectedAnswer")
+                println(s"${"NO".red}: $expectedAnswer")
                 loop(totalCount, state.wrong(word, qt), rest)
             }
           case Nil if state.wrong.nonEmpty =>
@@ -150,7 +150,6 @@ object PracticeArticles extends Practice {
 object PracticeWords extends Practice {
   val minIntervalHours = 2
   val bucketChange = 1
-  val sort = bson("bucket" -> 1, "lastCorrect" -> 1)
 
   case class ChosenTranslation(wd: WordData, translation: Translation)
 
@@ -158,8 +157,8 @@ object PracticeWords extends Practice {
     print(s"Cuántos palabras vas a practicar? ")
     val count = StdIn.readInt()
 
-    fetchWords(sort).map { wordDatas =>
-      val translationsByWord = wordDatas.map(wd => (wd.word, wd.translations)).toMap
+    fetchWords().map(_.sortBy(wd => (wd.bucket, wd.lastCorrect))).map { wordDatas =>
+      val translationsByWord = wordDatas.iterator.map(wd => (wd.word, wd.translations)).toMap
       val rand = new Random
       val maxLastCorrect = DateUtils.addHours(new JDate, -minIntervalHours)
       val questions = wordDatas.iterator.filter {
@@ -184,11 +183,12 @@ object PracticeWords extends Practice {
         round: Int,
         totalCount: Int,
         state: State[ChosenTranslation],
-        questions: List[(String, ChosenTranslation)]): State[ChosenTranslation] = {
+        questions: List[(String, ChosenTranslation)],
+        repeated: Boolean = false): State[ChosenTranslation] = {
 
         def wrongQuestionsToRepeat = {
           val State(total, wrong) = state
-          println(s"Has practicando $total palabras, ${wrong.size} incorrectas (${(total - wrong.size) * 100.0 / total}%)")
+          println(s"Has practicado $total palabras, ${wrong.size} incorrectas (${(total - wrong.size) * 100.0 / total}%)")
           val newQuestions = state.wrong.toArray
           shuffle(newQuestions)
           newQuestions.toList
@@ -196,10 +196,16 @@ object PracticeWords extends Practice {
 
         questions match {
           case (word, ChosenTranslation(wd, qt)) :: rest =>
-            StdIn.readLine(s"(${state.totalAsked + 1}/$totalCount) ${qt.speechPart}: (${qt.context.mkString(", ")}) ${qt.english.mkString(", ")} ") match {
+            if (!repeated) {
+              println()
+              qt.example.map(_.english).foreach(println)
+              print(s"(${state.totalAsked + 1}/$totalCount) ${qt.speechPart}: (${qt.context.mkString(", ")}) ${qt.english.map(_.green).mkString(", ")} ")
+            }
+            StdIn.readLine() match {
               case "." => loop(round, wrongQuestionsToRepeat.size, State(), wrongQuestionsToRepeat)
               case `word` =>
-                println(s"sí")
+                val exampleText = qt.example.map(_.spanish).map(": " + _).getOrElse("")
+                println(s"Sí$exampleText")
                 val now = new JDate
                 val newBucket =
                   if (round == 0 && wd.bucket < 4) wd.bucket + bucketChange
@@ -210,11 +216,12 @@ object PracticeWords extends Practice {
                 ))
                 loop(round, totalCount, state.right, rest)
               case answer if translationsByWord.getOrElse(answer, Nil)
-                .exists(t => t.english == qt.english && t.baseSpeechPart == qt.baseSpeechPart) =>
-                println(s"sí, pero...")
-                loop(round, totalCount, state, questions)
+                .exists(t => (t.english.toSet intersect qt.english.toSet).nonEmpty && t.baseSpeechPart == qt.baseSpeechPart) =>
+                print(s"Sí, pero... ")
+                loop(round, totalCount, state, questions, repeated = true)
               case answer =>
-                println(s"no: $word")
+                val exampleText = qt.example.map(_.spanish).getOrElse("")
+                println(s"${"NO".red}: $word\n$exampleText")
                 val newBucket = 0 max (wd.bucket - bucketChange)
                 wordsColl.update(BSONDocument("_id" -> word), BSONDocument(
                   "$set" -> BSONDocument("lastIncorrect" -> new JDate, "bucket" -> newBucket),

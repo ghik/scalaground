@@ -20,7 +20,6 @@ lazy val core = project.dependsOn(macros).settings(
     "org.apache.commons" % "commons-lang3" % "3.4",
     "com.chuusai" %% "shapeless" % "2.2.5",
     "org.jsoup" % "jsoup" % "1.8.3",
-    "com.typesafe.akka" %% "akka-actor" % "2.4.4",
     "org.reactivemongo" %% "reactivemongo" % "0.11.11",
     "org.slf4j" % "slf4j-api" % "1.7.21",
     "com.lihaoyi" %% "pprint" % "0.4.0",

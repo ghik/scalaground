@@ -8,6 +8,7 @@ import javax.imageio.ImageIO
 import javax.swing._
 
 import com.avsystem.commons._
+import com.avsystem.commons.concurrent.RunInQueueEC
 import com.avsystem.commons.jiop.JavaInterop._
 import com.avsystem.commons.misc.Opt
 import com.google.common.io.ByteStreams
@@ -152,8 +153,13 @@ trait RegularConjugations {
 }
 
 trait Spanish extends RegularConjugations {
+  this: SpanishMongo =>
   val ParticipleLabel = "Participle: "
   val VowelStemEndings = Set('a', 'o', 'e')
+
+  implicit class FutureOps[A](fut: Future[A]) {
+    def await: A = Await.result(fut, Duration.Inf)
+  }
 
   def participle(verb: String) = {
     val body = Jsoup.connect(s"http://www.spanishdict.com/conjugate/$verb").get.body
@@ -254,7 +260,13 @@ trait Spanish extends RegularConjugations {
                             val englishExample = exampleEl.child(2).text.trim
                             Example(spanishExample, englishExample)
                           }
-                        Translation(dict, partOfSpeech, (context ++ transContext).distinct, translation, exampleOpt)
+
+                        val fixedPartOfSpeech = partOfSpeech match {
+                          case "noun" => wordReferenceSpeechPart(spanish, wordReference(spanish).await) getOrElse "noun"
+                          case _ => partOfSpeech
+                        }
+
+                        Translation(dict, fixedPartOfSpeech, (context ++ transContext).distinct, translation, exampleOpt)
                       }
                     }
                 }
@@ -295,7 +307,7 @@ trait Spanish extends RegularConjugations {
               Conjugation(fs, ss, ts, fp, sp, tp)
           }
 
-      val List(indicative, subjunctive, imperatives, perfect, perfectSubjunctive) =
+      val List(indicative, subjunctive, imperatives, perfect, perfectSubjunctive, _*) =
         conjugation.getElementsByClass("card").asScala.iterator.drop(1).map(parseCard).toList
 
       val List(indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture) = indicative
@@ -313,6 +325,41 @@ trait Spanish extends RegularConjugations {
         subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect
       )
     }
+  }
+
+  def wordReferenceSpeechPart(word: String, doc: Document): Opt[String] = {
+    case class WREntry(spanish: Set[String], pos: String, english: Set[String]) {
+      def spanishdictPos = pos match {
+        case "nm" | "n propio m" => "masculine noun"
+        case "nf" | "n propio f" => "feminine noun"
+        case "nmf" | "nm, nf" if spanish.size == 2 => "masculine noun"
+        case "nmf" | "nm, nf" | "n común" | "n amb" => "masculine or feminine noun"
+        case "nfpl" | "nmpl" => "plural noun"
+      }
+    }
+
+    def extractSpanish(frwrd: Element) =
+      frwrd.getElementsByTag("strong").first.text.trim.split(",\\s*").toSet
+
+    def extractPOS(frwrd: Element) =
+      frwrd.getElementsByClass("POS2").first.ownText.trim
+
+    def extractEnglish(frwrd: Element): Set[String] = {
+      val esen = frwrd.parent
+      val evenOdd = if (esen.classNames.contains("even")) "even" else "odd"
+      Iterator.iterate(esen)(_.nextElementSibling)
+        .takeWhile(e => e != null && e.classNames.contains(evenOdd))
+        .flatMap(_.getElementsByClass("ToWrd").iterator.asScala)
+        .flatMap(_.ownText.trim.split(",\\s*")).toSet
+    }
+
+    val poss = doc.getElementsByClass("FrWrd").iterator.asScala
+      .filter(_.parent.attr("id").opt.exists(_.startsWith("esen:")))
+      .map(frwrd => WREntry(extractSpanish(frwrd), extractPOS(frwrd), extractEnglish(frwrd)))
+      .filter(e => e.pos.startsWith("n") && e.spanish.contains(word))
+      .map(_.spanishdictPos).toSet
+
+    if (poss.size == 1) poss.head.opt else Opt.Empty
   }
 
   def writeTo(file: String, content: String): Unit = {
@@ -341,6 +388,7 @@ trait SpanishMongo extends Spanish {
   val wordsColl: BSONCollection = db("words")
   val unknownWordsColl: BSONCollection = db("unknownWords")
   val imageData: BSONCollection = db("imageData")
+  val wrDocs: BSONCollection = db("wrdocs")
 
   implicit def ec: ExecutionContext = driver.system.dispatcher
   val blockingExecutionContext = ExecutionContext.fromExecutorService(Executors.newCachedThreadPool)
@@ -348,8 +396,8 @@ trait SpanishMongo extends Spanish {
   def bson(elements: Producer[(String, BSONValue)]*) = BSONDocument(elements: _*)
   def bsonArr(elements: Producer[BSONValue]*) = BSONArray(elements: _*)
 
-  def fetchWords(sort: BSONDocument): Future[Seq[WordData]] = {
-    wordsColl.find(bson()).sort(sort)
+  def fetchWords(): Future[Seq[WordData]] = {
+    wordsColl.find(bson())
       .cursor[WordData](ReadPreference.primary)
       .collect[Seq]()
   }
@@ -400,12 +448,20 @@ trait SpanishMongo extends Spanish {
       case _ => Future.successful(Vector.empty)
     }
 
-  def main(args: Array[String]): Unit =
-    try Await.result(execute(), Duration.Inf) finally {
-      Thread.sleep(100)
-      connection.close()
-      driver.close()
+  def wordReference(word: String): Future[Document] =
+    wrDocs.find(bson("_id" -> word)).one[WrDoc].flatMap {
+      case Some(WrDoc(_, doc)) => Future.successful(Jsoup.parse(doc))
+      case None =>
+        val url = s"http://www.wordreference.com/es/en/translation.asp?spen=${URLEncoder.encode(word, "UTF-8")}"
+        val doc = Jsoup.connect(url).get()
+        val docHtml = doc.outerHtml
+        if (docHtml.contains("WordReference is receiving too many requests from your IP address"))
+          throw new Exception("overload")
+        wrDocs.insert(WrDoc(word, docHtml)).map(_ => doc)
     }
+
+  def main(args: Array[String]): Unit =
+    try execute().await finally driver.close()
 
   def chooseImage(imageUrls: Vector[String]) = {
     getImages(imageUrls, 5).foreach { images =>
@@ -447,12 +503,13 @@ object ImageChoiceUI extends JFrame {
     val imageCount = images.size
     setSize(ImageSize * imageCount + 100, ImageSize)
     panel.removeAll()
-    images.map { bytes => bytes |>
-      (new ByteArrayInputStream(_)) |>
-      (ImageIO.read(_)) |>
-      (i => Scalr.resize(i, if (i.getWidth > i.getHeight) FIT_TO_WIDTH else FIT_TO_HEIGHT, ImageSize, ImageSize)) |>
-      (new ImageIcon(_)) |>
-      (new JLabel(_))
+    images.map { bytes =>
+      bytes |>
+        (new ByteArrayInputStream(_)) |>
+        (ImageIO.read(_)) |>
+        (i => Scalr.resize(i, if (i.getWidth > i.getHeight) FIT_TO_WIDTH else FIT_TO_HEIGHT, ImageSize, ImageSize)) |>
+        (new ImageIcon(_)) |>
+        (new JLabel(_))
     }.foreach(panel.add)
     revalidate()
   }
@@ -500,25 +557,31 @@ object FixTranslations extends SpanishMongo {
 object Inject extends SpanishMongo {
   def execute() = {
     val words = Source.fromFile("/home/ghik/Dropbox/espaniol/palabrasdb.txt")
-      .getLines().map(_.trim).filter(_.nonEmpty).filterNot(_.startsWith("--")).map(stripArticle)
+      .getLines().map(_.trim).filter(_.nonEmpty).filterNot(_.startsWith("-")).map(stripArticle)
       .toSeq.distinct
 
     def allIds(coll: BSONCollection) =
       coll.find(bson()).cursor[BSONDocument](ReadPreference.primary).collect[List]()
         .map(_.iterator.map(_.getAs[String]("_id").get).toSet)
 
-    val alreadyPresent = Await.result(for {
-      known <- allIds(wordsColl)
-      unknown <- allIds(unknownWordsColl)
-    } yield known ++ unknown, Duration.Inf)
+    val alreadyPresent = {
+      for {
+        known <- allIds(wordsColl)
+        unknown <- allIds(unknownWordsColl)
+      } yield known ++ unknown
+    }.await
 
     val now = new JDate
-    val results = words.filterNot(alreadyPresent).zipWithIndex.map { case (word, seq) =>
+    val wordsToInsert = words.iterator
+      .filter(w => w.startsWith("+") || !alreadyPresent.contains(w)).map(_.stripPrefix("+")).toVector
+    val results = wordsToInsert.iterator.zipWithIndex.map { case (word, seq) =>
       val rawTranslations = englishMeanings(word.toLowerCase)
       if (rawTranslations.nonEmpty) {
-        println(word)
+        println(s"${seq + 1}/${wordsToInsert.size} ${word.magenta}")
         println(rawTranslations.iterator.zipWithIndex.map {
-          case (trans, i) => s"${i + 1}. ${trans.meaningLine}"
+          case (trans, i) =>
+            s"${i + 1}. ${trans.meaningLine}" +
+              trans.example.map(e => s"\n   ${e.english}\n   ${e.spanish}").getOrElse("")
         }.mkString("\n"))
         val indicesToAsk = StdIn.readLine("translations to ask for: ").split(",").iterator
           .map(_.trim).filter(_.nonEmpty).map(_.toInt).toSet
@@ -530,7 +593,7 @@ object Inject extends SpanishMongo {
             if (translations.exists(_.baseSpeechPart == "verb"))
               loadConjugations(word).toOption
             else None
-          wordsColl.insert(WordData(word, translations, conjugations, now, seq))
+          wordsColl.update(bson("_id" -> word), WordData(word, translations, conjugations, now, seq), upsert = true)
         } else {
           unknownWordsColl.insert(bson("_id" -> word))
         }
@@ -544,15 +607,26 @@ object Inject extends SpanishMongo {
   }
 }
 
-object CleanUp extends SpanishMongo {
+object FixPartOfSpeech extends SpanishMongo {
   def execute() = for {
     allWords <- wordsColl.find(bson()).cursor[WordData](ReadPreference.primary).collect[List]()
-    deletions <- Future.traverse(allWords.filter(_.translations.forall(!_.ask)))(wd => wordsColl.remove(bson("_id" -> wd.word)))
+    updates <- Future.traverse(allWords)({ wd =>
+      val newTrans = wd.translations.map {
+        case t if t.speechPart == "noun" =>
+          t.copy(speechPart = wordReferenceSpeechPart(wd.word, wordReference(wd.word).await) getOrElse "noun")
+        case t => t
+      }
+      if (newTrans != wd.translations) {
+        println(s"New translations for ${wd.word}:${newTrans.mkString("\n", "\n", "\n")}")
+        wordsColl.update(bson("_id" -> wd.word), bson("$set" -> bson("translations" -> newTrans)))
+      }
+      else Future.successful(())
+    })(implicitly, RunInQueueEC)
   } yield ()
 }
 
-object ParsingTest extends Spanish {
-  def main(args: Array[String]) {
-    englishMeanings("característico").foreach(println)
+object ParsingTest {
+  def main(args: Array[String]): Unit = {
+
   }
 }
