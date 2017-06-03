@@ -9,7 +9,6 @@ import javax.swing._
 
 import com.avsystem.commons._
 import com.avsystem.commons.concurrent.RunInQueueEC
-import com.avsystem.commons.jiop.JavaInterop._
 import com.avsystem.commons.misc.Opt
 import com.google.common.io.ByteStreams
 import org.imgscalr.Scalr
@@ -288,43 +287,39 @@ trait Spanish extends RegularConjugations {
   }
 
   def loadConjugations(verb: String): Opt[AllConjugations] = {
-    val doc = Jsoup.connect(s"http://www.spanishdict.com/conjugate/${URLEncoder.encode(verb, "UTF-8").stripSuffix("se")}").get
+    val doc = Jsoup.connect(s"http://www.spanishdict.com/conjugate/${URLEncoder.encode(verb, "UTF-8")}").get
 
-    val conjElem = doc.getElementsByClass("conjugation").first.opt.map { conj =>
-      conj.getElementById("conjugate-es").opt.getOrElse(conj)
-    }
-    conjElem.map { conjugation =>
-      val gerund = conjugation.getElementsContainingOwnText("Gerund:").first.text.trim.stripPrefix("Gerund: ")
-      val participle = conjugation.getElementsContainingOwnText("Participle:").first.text.trim.stripPrefix("Participle: ")
+    val conjugation = doc.getElementsByClass("conjugation").first
+    val gerund = conjugation.getElementsContainingOwnText("Present Participle:")
+      .first.text.trim.stripPrefix("Present Participle:")
+    val participle = conjugation.getElementsContainingOwnText("Past Participle:")
+      .first.text.trim.stripPrefix("Past Participle:")
 
-      def parseCard(card: Element): List[Conjugation] =
-        card.getElementsByClass("group").asScala.iterator
-          .map(_.getElementsByClass("conj").asScala.iterator.map(_.text.trim).toList).toList
-          .map { case List(fs, ss, ts, fp, sp, tp) =>
-            if (verb.endsWith("se"))
-              Conjugation(s"me $fs", s"te $ss", s"se $ts", s"nos $fp", s"os $sp", s"se $tp")
-            else
-              Conjugation(fs, ss, ts, fp, sp, tp)
-          }
+    def parseTenseGroup(tenseGroup: Element): List[Conjugation] =
+      tenseGroup.getElementsByClass("table").iterator.asScala
+        .map(_.getElementsByClass("conj").iterator.asScala.map(_.text.trim).toList)
+        .toList
+        .map { case List(fs, ss, ts, fp, sp, tp) =>
+          Conjugation(fs, ss, ts, fp, sp, tp)
+        }
 
-      val List(indicative, subjunctive, imperatives, perfect, perfectSubjunctive, _*) =
-        conjugation.getElementsByClass("card").asScala.iterator.drop(1).map(parseCard).toList
+    val List(indicative, subjunctive, imperatives, continuous, perfect, perfectSubjunctive, _*) =
+      conjugation.getElementsByClass("tense-group").asScala.iterator.map(parseTenseGroup).toList
 
-      val List(indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture) = indicative
-      val List(subjunctivePresent, subjunctiveImperfect, subjunctiveImperfect2, subjunctiveFuture) = subjunctive
-      val List(imperative) = imperatives
-      val List(presentPerfect, preteritePerfect, pastPerfect, conditionalPerfect, futurePerfect) = perfect
-      val List(subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect) = perfectSubjunctive
+    val List(indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture) = indicative
+    val List(subjunctivePresent, subjunctiveImperfect, subjunctiveImperfect2, subjunctiveFuture) = subjunctive
+    val List(imperativeAffirmative, imperativeNegative) = imperatives
+    val List(presentPerfect, preteritePerfect, pastPerfect, conditionalPerfect, futurePerfect) = perfect
+    val List(subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect) = perfectSubjunctive
 
-      AllConjugations(
-        gerund, participle,
-        indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture,
-        subjunctivePresent, subjunctiveImperfect, subjunctiveImperfect2, subjunctiveFuture,
-        imperative,
-        presentPerfect, preteritePerfect, pastPerfect, conditionalPerfect, futurePerfect,
-        subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect
-      )
-    }
+    AllConjugations(
+      gerund, participle,
+      indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture,
+      subjunctivePresent, subjunctiveImperfect, subjunctiveImperfect2, subjunctiveFuture,
+      imperativeAffirmative,
+      presentPerfect, preteritePerfect, pastPerfect, conditionalPerfect, futurePerfect,
+      subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect
+    ).opt
   }
 
   def wordReferenceSpeechPart(word: String, doc: Document): Opt[String] = {
@@ -334,7 +329,7 @@ trait Spanish extends RegularConjugations {
         case "nf" | "n propio f" => "feminine noun"
         case "nmf" | "nm, nf" if spanish.size == 2 => "masculine noun"
         case "nmf" | "nm, nf" | "n común" | "n amb" => "masculine or feminine noun"
-        case "nfpl" | "nmpl" => "plural noun"
+        case "nfpl" | "nmpl" | "nmpl inv" => "plural noun"
       }
     }
 
@@ -393,7 +388,7 @@ trait SpanishMongo extends Spanish {
   implicit def ec: ExecutionContext = driver.system.dispatcher
   val blockingExecutionContext = ExecutionContext.fromExecutorService(Executors.newCachedThreadPool)
 
-  def bson(elements: Producer[(String, BSONValue)]*) = BSONDocument(elements: _*)
+  def bson(elements: Producer[BSONElement]*) = BSONDocument(elements: _*)
   def bsonArr(elements: Producer[BSONValue]*) = BSONArray(elements: _*)
 
   def fetchWords(): Future[Seq[WordData]] = {

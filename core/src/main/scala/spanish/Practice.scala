@@ -2,7 +2,7 @@ package spanish
 
 import com.avsystem.commons._
 import com.avsystem.commons.jiop.JavaInterop._
-import org.apache.commons.lang3.time.DateUtils
+import org.apache.commons.lang3.time.{DateFormatUtils, DateUtils}
 import reactivemongo.bson.BSONDocument
 import spanish.Form._
 
@@ -148,19 +148,26 @@ object PracticeArticles extends Practice {
 }
 
 object PracticeWords extends Practice {
-  val minIntervalHours = 2
   val bucketChange = 1
+  val minIntervalHours = 2
+  val maxLastCorrect: JDate =
+    (DateFormatUtils.ISO_DATE_FORMAT.parse("2020-01-01"), DateUtils.addHours(new JDate, -minIntervalHours)) |> {
+      case (d1, d2) => if (d1 before d2) d1 else d2
+    }
 
   case class ChosenTranslation(wd: WordData, translation: Translation)
 
   def execute() = {
     print(s"Cuántos palabras vas a practicar? ")
     val count = StdIn.readInt()
+    val tempHash = {
+      val salt = Random.nextInt
+      (wd: WordData) => wd.hashCode | salt
+    }
 
-    fetchWords().map(_.sortBy(wd => (wd.bucket, wd.lastCorrect))).map { wordDatas =>
+    fetchWords().map(_.sortBy(wd => (wd.bucket, tempHash(wd)))).map { wordDatas =>
       val translationsByWord = wordDatas.iterator.map(wd => (wd.word, wd.translations)).toMap
       val rand = new Random
-      val maxLastCorrect = DateUtils.addHours(new JDate, -minIntervalHours)
       val questions = wordDatas.iterator.filter {
         wd => wd.lastCorrect.forall(_.before(maxLastCorrect))
       }.flatMap { wd =>
