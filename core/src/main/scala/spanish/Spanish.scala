@@ -289,47 +289,49 @@ trait Spanish extends RegularConjugations {
   def loadConjugations(verb: String): Opt[AllConjugations] = {
     val doc = Jsoup.connect(s"http://www.spanishdict.com/conjugate/${URLEncoder.encode(verb, "UTF-8")}").get
 
-    val conjugation = doc.getElementsByClass("conjugation").first
-    val gerund = conjugation.getElementsContainingOwnText("Present Participle:")
-      .first.text.trim.stripPrefix("Present Participle:")
-    val participle = conjugation.getElementsContainingOwnText("Past Participle:")
-      .first.text.trim.stripPrefix("Past Participle:")
+    doc.getElementsByClass("conjugation").first.opt.map { conjugation =>
+      val gerund = conjugation.getElementsContainingOwnText("Present Participle:")
+        .first.text.trim.stripPrefix("Present Participle:")
+      val participle = conjugation.getElementsContainingOwnText("Past Participle:")
+        .first.text.trim.stripPrefix("Past Participle:")
 
-    def parseTenseGroup(tenseGroup: Element): List[Conjugation] =
-      tenseGroup.getElementsByClass("table").iterator.asScala
-        .map(_.getElementsByClass("conj").iterator.asScala.map(_.text.trim).toList)
-        .toList
-        .map { case List(fs, ss, ts, fp, sp, tp) =>
-          Conjugation(fs, ss, ts, fp, sp, tp)
-        }
+      def parseTenseGroup(tenseGroup: Element): List[Conjugation] =
+        tenseGroup.getElementsByClass("table").iterator.asScala
+          .map(_.getElementsByClass("conj").iterator.asScala.map(_.text.trim).toList)
+          .toList
+          .map { case List(fs, ss, ts, fp, sp, tp) =>
+            Conjugation(fs, ss, ts, fp, sp, tp)
+          }
 
-    val List(indicative, subjunctive, imperatives, continuous, perfect, perfectSubjunctive, _*) =
-      conjugation.getElementsByClass("tense-group").asScala.iterator.map(parseTenseGroup).toList
+      val List(indicative, subjunctive, imperatives, continuous, perfect, perfectSubjunctive, _*) =
+        conjugation.getElementsByClass("tense-group").asScala.iterator.map(parseTenseGroup).toList
 
-    val List(indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture) = indicative
-    val List(subjunctivePresent, subjunctiveImperfect, subjunctiveImperfect2, subjunctiveFuture) = subjunctive
-    val List(imperativeAffirmative, imperativeNegative) = imperatives
-    val List(presentPerfect, preteritePerfect, pastPerfect, conditionalPerfect, futurePerfect) = perfect
-    val List(subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect) = perfectSubjunctive
+      val List(indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture) = indicative
+      val List(subjunctivePresent, subjunctiveImperfect, subjunctiveImperfect2, subjunctiveFuture) = subjunctive
+      val List(imperativeAffirmative, imperativeNegative) = imperatives
+      val List(presentPerfect, preteritePerfect, pastPerfect, conditionalPerfect, futurePerfect) = perfect
+      val List(subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect) = perfectSubjunctive
 
-    AllConjugations(
-      gerund, participle,
-      indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture,
-      subjunctivePresent, subjunctiveImperfect, subjunctiveImperfect2, subjunctiveFuture,
-      imperativeAffirmative,
-      presentPerfect, preteritePerfect, pastPerfect, conditionalPerfect, futurePerfect,
-      subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect
-    ).opt
+      AllConjugations(
+        gerund, participle,
+        indicativePresent, indicativePreterite, indicativeImperfect, indicativeConditional, indicativeFuture,
+        subjunctivePresent, subjunctiveImperfect, subjunctiveImperfect2, subjunctiveFuture,
+        imperativeAffirmative,
+        presentPerfect, preteritePerfect, pastPerfect, conditionalPerfect, futurePerfect,
+        subjunctivePresentPerfect, subjunctivePastPerfect, subjunctiveFuturePerfect
+      )
+    }
   }
 
   def wordReferenceSpeechPart(word: String, doc: Document): Opt[String] = {
     case class WREntry(spanish: Set[String], pos: String, english: Set[String]) {
       def spanishdictPos = pos match {
-        case "nm" | "n propio m" => "masculine noun"
-        case "nf" | "n propio f" => "feminine noun"
+        case "nm" | "nm inv" | "n propio m" => "masculine noun"
+        case "nf" | "nf inv" | "n propio f" => "feminine noun"
         case "nmf" | "nm, nf" if spanish.size == 2 => "masculine noun"
-        case "nmf" | "nm, nf" | "n común" | "n amb" => "masculine or feminine noun"
+        case "nmf" | "nm, nf" | "n común" | "n común inv" | "n amb" => "masculine or feminine noun"
         case "nfpl" | "nmpl" | "nmpl inv" => "plural noun"
+        case _ => throw new IllegalArgumentException(s"Unknown part of speech: $pos")
       }
     }
 
