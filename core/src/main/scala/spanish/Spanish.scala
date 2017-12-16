@@ -329,7 +329,7 @@ trait Spanish extends RegularConjugations {
         case "nm" | "nm inv" | "n propio m" => "masculine noun"
         case "nf" | "nf inv" | "n propio f" => "feminine noun"
         case "nmf" | "nm, nf" if spanish.size == 2 => "masculine noun"
-        case "nmf" | "nm, nf" | "n común" | "n común inv" | "n amb" => "masculine or feminine noun"
+        case "nmf" | "nm, nf" | "nm. nf" | "n común" | "n común inv" | "n amb" => "masculine or feminine noun"
         case "nfpl" | "nmpl" | "nmpl inv" => "plural noun"
         case _ => throw new IllegalArgumentException(s"Unknown part of speech: $pos")
       }

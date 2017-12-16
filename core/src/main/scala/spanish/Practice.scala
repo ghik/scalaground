@@ -158,7 +158,7 @@ object PracticeWords extends Practice {
   case class ChosenTranslation(wd: WordData, translation: Translation)
 
   def execute() = {
-    print(s"Cuántos palabras vas a practicar? ")
+    print(s"Cuántas palabras vas a practicar? ")
     val count = StdIn.readInt()
     val tempHash = {
       val salt = Random.nextInt

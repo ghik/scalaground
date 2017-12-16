@@ -1,7 +1,16 @@
 name in ThisBuild := "scalaground"
 version in ThisBuild := "1.0"
-scalaVersion in ThisBuild := "2.12.2"
+scalaVersion in ThisBuild := "2.12.3"
 resolvers in ThisBuild += Resolver.sonatypeRepo("releases")
+
+def projAppender()
+
+val commonSettings = Seq(
+  extraLoggers := {
+    val eg = extraLoggers.value
+    (key: ScopedKey[_]) =>
+  }
+)
 
 lazy val scalaground = project.in(file("."))
   .aggregate(macros, core)
@@ -25,7 +34,7 @@ lazy val core = project.dependsOn(macros).settings(
     "com.lihaoyi" %% "pprint" % "0.4.4",
     "com.lihaoyi" %% "upickle" % "0.4.4",
     "org.imgscalr" % "imgscalr-lib" % "4.2",
-    "org.typelevel" %% "cats-core" % "0.9.0",
+    "io.circe" %% "circe-core" % "0.8.0",
     "org.scalatest" %% "scalatest" % "3.0.1" % Test
   )
 )
