@@ -1,16 +1,11 @@
-name in ThisBuild := "scalaground"
-version in ThisBuild := "1.0"
-scalaVersion in ThisBuild := "2.12.3"
-resolvers in ThisBuild += Resolver.sonatypeRepo("releases")
+import sbt.Keys.version
 
-def projAppender()
-
-val commonSettings = Seq(
-  extraLoggers := {
-    val eg = extraLoggers.value
-    (key: ScopedKey[_]) =>
-  }
-)
+inThisBuild(Seq(
+  name := "scalaground",
+  version := "1.0",
+  scalaVersion := "2.12.3",
+  resolvers += Resolver.sonatypeRepo("releases")
+))
 
 lazy val scalaground = project.in(file("."))
   .aggregate(macros, core)
@@ -25,7 +20,7 @@ lazy val core = project.dependsOn(macros).settings(
     "org.scala-lang" % "scala-reflect" % scalaVersion.value,
     "org.scala-lang" % "scala-compiler" % scalaVersion.value,
 
-    "com.avsystem.commons" %% "commons-core" % "1.20.0",
+    "com.avsystem.commons" %% "commons-core" % "1.25.4",
     "org.apache.commons" % "commons-lang3" % "3.4",
     "com.chuusai" %% "shapeless" % "2.3.2",
     "org.jsoup" % "jsoup" % "1.8.3",

@@ -16,13 +16,14 @@ import org.imgscalr.Scalr.Mode.{FIT_TO_HEIGHT, FIT_TO_WIDTH}
 import org.jsoup.Jsoup
 import org.jsoup.nodes.{Document, Element}
 import reactivemongo.api.collections.bson.BSONCollection
-import reactivemongo.api.{MongoDriver, ReadPreference}
+import reactivemongo.api.commands.{UpdateWriteResult, WriteResult}
+import reactivemongo.api.{MongoConnection, MongoDriver, ReadPreference}
 import reactivemongo.bson._
 import upickle.Js
 
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.Duration
-import scala.concurrent.{Await, ExecutionContext, Future}
+import scala.concurrent.{Await, ExecutionContext, ExecutionContextExecutorService, Future}
 import scala.io.{Source, StdIn}
 import scala.util.Random
 
@@ -160,7 +161,7 @@ trait Spanish extends RegularConjugations {
     def await: A = Await.result(fut, Duration.Inf)
   }
 
-  def participle(verb: String) = {
+  def participle(verb: String): String = {
     val body = Jsoup.connect(s"http://www.spanishdict.com/conjugate/$verb").get.body
     body.getElementsContainingOwnText(ParticipleLabel).get(0).ownText().stripPrefix(ParticipleLabel)
   }
@@ -179,12 +180,12 @@ trait Spanish extends RegularConjugations {
 
   val articles = Set("el", "la", "el/la", "los", "las")
 
-  def article(word: String) =
+  def article(word: String): _root_.com.avsystem.commons.Opt[String] =
     articles.find(a => word.startsWith(a + " ")).toOpt
-  def stripArticle(word: String) =
+  def stripArticle(word: String): String =
     article(word).map(a => word.stripPrefix(a + " ")).getOrElse(word)
 
-  def isEasyTranslation(english: String, spanish: String) =
+  def isEasyTranslation(english: String, spanish: String): Boolean =
     english == spanish ||
       english + "o" == spanish ||
       english + "a" == spanish ||
@@ -204,7 +205,7 @@ trait Spanish extends RegularConjugations {
       english.replaceFirst("ssion$", "sión") == spanish ||
       english.replaceFirst("te$", "do") == spanish
 
-  def englishMeanings(spanish: String) = {
+  def englishMeanings(spanish: String): List[Translation] = {
     def entryTitleElements(entryTitle: Element) =
       Iterator.iterate(entryTitle)(_.nextElementSibling).drop(1)
         .takeWhile(s => s != null && !s.classNames.asScala.exists(_.contains("-entry-title")))
@@ -325,7 +326,7 @@ trait Spanish extends RegularConjugations {
 
   def wordReferenceSpeechPart(word: String, doc: Document): Opt[String] = {
     case class WREntry(spanish: Set[String], pos: String, english: Set[String]) {
-      def spanishdictPos = pos match {
+      def spanishdictPos: String = pos match {
         case "nm" | "nm inv" | "n propio m" => "masculine noun"
         case "nf" | "nf inv" | "n propio f" => "feminine noun"
         case "nmf" | "nm, nf" if spanish.size == 2 => "masculine noun"
@@ -371,7 +372,7 @@ trait Spanish extends RegularConjugations {
     baos.toByteArray
   }
 
-  def imageFromBytes(bytes: Array[Byte]) =
+  def imageFromBytes(bytes: Array[Byte]): BufferedImage =
     ImageIO.read(new ByteArrayInputStream(bytes))
 
   def invokeUI(code: => Any): Unit =
@@ -380,7 +381,7 @@ trait Spanish extends RegularConjugations {
 
 trait SpanishMongo extends Spanish {
   val driver = new MongoDriver
-  val connection = driver.connection(List("localhost"))
+  val connection: MongoConnection = driver.connection(List("localhost"))
   val db = connection("words")
   val wordsColl: BSONCollection = db("words")
   val unknownWordsColl: BSONCollection = db("unknownWords")
@@ -388,7 +389,7 @@ trait SpanishMongo extends Spanish {
   val wrDocs: BSONCollection = db("wrdocs")
 
   implicit def ec: ExecutionContext = driver.system.dispatcher
-  val blockingExecutionContext = ExecutionContext.fromExecutorService(Executors.newCachedThreadPool)
+  val blockingExecutionContext: ExecutionContextExecutorService = ExecutionContext.fromExecutorService(Executors.newCachedThreadPool)
 
   def bson(elements: Producer[BSONElement]*) = BSONDocument(elements: _*)
   def bsonArr(elements: Producer[BSONValue]*) = BSONArray(elements: _*)
@@ -405,7 +406,7 @@ trait SpanishMongo extends Spanish {
       .cursor[WordData](ReadPreference.primary)
       .collect[Seq]()
 
-  def loadImageData(url: String) =
+  def loadImageData(url: String): Future[Option[Array[Byte]]] =
     Future(ByteStreams.toByteArray(new URL(url).openStream()))(blockingExecutionContext)
       .filter(bytes => ImageIO.read(new ByteArrayInputStream(bytes)) != null)
       .map(Option(_)).recover({ case _ => None })
@@ -421,7 +422,7 @@ trait SpanishMongo extends Spanish {
       } yield result
     }
 
-  def loadImageUrls(word: String) = {
+  def loadImageUrls(word: String): Vector[String] = {
     val url = s"https://www.google.pl/search?q=$word&tbm=isch"
     val doc = Jsoup.connect(url)
       .header("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:45.0) Gecko/20100101 Firefox/45.0").get
@@ -460,7 +461,7 @@ trait SpanishMongo extends Spanish {
   def main(args: Array[String]): Unit =
     try execute().await finally driver.close()
 
-  def chooseImage(imageUrls: Vector[String]) = {
+  def chooseImage(imageUrls: Vector[String]): Option[String] = {
     getImages(imageUrls, 5).foreach { images =>
       invokeUI(ImageChoiceUI.setImages(images.map(_.data)))
     }
@@ -470,7 +471,7 @@ trait SpanishMongo extends Spanish {
 }
 
 object InjectConjugations extends SpanishMongo {
-  def execute() = wordsColl.find(bson("conjugations" -> bson("$exists" -> false)))
+  def execute(): Future[BSeq[UpdateWriteResult]] = wordsColl.find(bson("conjugations" -> bson("$exists" -> false)))
     .cursor[WordData](ReadPreference.primary).collect[Seq]()
     .flatMap { wordDatas =>
       val verbs = wordDatas.filter(_.translations.exists(_.baseSpeechPart == "verb")).map(_.word)
@@ -513,7 +514,7 @@ object ImageChoiceUI extends JFrame {
 }
 
 object ChooseImages extends SpanishMongo {
-  def execute() = {
+  def execute(): Future[List[UpdateWriteResult]] = {
     invokeUI(ImageChoiceUI.setVisible(true))
     wordsColl.find(bson("imagesToShow" -> bson("$exists" -> false)))
       .cursor[BSONDocument](ReadPreference.primary).collect[List]()
@@ -536,7 +537,7 @@ object ChooseImages extends SpanishMongo {
 }
 
 object FixTranslations extends SpanishMongo {
-  def execute() = {
+  def execute(): Future[List[UpdateWriteResult]] = {
     wordsColl.find(bson("translationsToAsk" -> bson("$exists" -> true)))
       .cursor[BSONDocument](ReadPreference.primary).collect[List]()
       .flatMap { docs =>
@@ -552,7 +553,7 @@ object FixTranslations extends SpanishMongo {
 }
 
 object Inject extends SpanishMongo {
-  def execute() = {
+  def execute(): Future[Iterator[WriteResult]] = {
     val words = Source.fromFile("/home/ghik/Dropbox/espaniol/palabrasdb.txt")
       .getLines().map(_.trim).filter(_.nonEmpty).filterNot(_.startsWith("-")).map(stripArticle)
       .toSeq.distinct
@@ -605,7 +606,7 @@ object Inject extends SpanishMongo {
 }
 
 object FixPartOfSpeech extends SpanishMongo {
-  def execute() = for {
+  def execute(): Future[Unit] = for {
     allWords <- wordsColl.find(bson()).cursor[WordData](ReadPreference.primary).collect[List]()
     updates <- Future.traverse(allWords)({ wd =>
       val newTrans = wd.translations.map {
