@@ -3,7 +3,7 @@ import sbt.Keys.version
 inThisBuild(Seq(
   name := "scalaground",
   version := "1.0",
-  scalaVersion := "2.12.3",
+  scalaVersion := "2.12.7",
   resolvers += Resolver.sonatypeRepo("releases")
 ))
 
@@ -20,11 +20,13 @@ lazy val core = project.dependsOn(macros).settings(
     "org.scala-lang" % "scala-reflect" % scalaVersion.value,
     "org.scala-lang" % "scala-compiler" % scalaVersion.value,
 
-    "com.avsystem.commons" %% "commons-core" % "1.25.4",
+    "com.avsystem.commons" %% "commons-core" % "1.33.1",
+    "com.avsystem.commons" %% "commons-mongo" % "1.33.1",
+    "org.mongodb.scala" %% "mongo-scala-driver" % "2.4.2",
+    "com.google.guava" % "guava" % "23.0",
     "org.apache.commons" % "commons-lang3" % "3.4",
     "com.chuusai" %% "shapeless" % "2.3.2",
     "org.jsoup" % "jsoup" % "1.8.3",
-    "org.reactivemongo" %% "reactivemongo" % "0.12.1",
     "org.slf4j" % "slf4j-api" % "1.7.21",
     "com.lihaoyi" %% "pprint" % "0.4.4",
     "com.lihaoyi" %% "upickle" % "0.4.4",

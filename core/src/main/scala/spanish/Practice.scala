@@ -2,15 +2,15 @@ package spanish
 
 import com.avsystem.commons._
 import com.avsystem.commons.jiop.JavaInterop._
+import com.avsystem.commons.mongo.core.ops.Updating._
 import org.apache.commons.lang3.time.{DateFormatUtils, DateUtils}
-import reactivemongo.bson.BSONDocument
 import spanish.Form._
 
 import scala.collection.mutable.ArrayBuffer
 import scala.io.StdIn
 import scala.util.Random
 
-trait Practice extends SpanishMongo {
+abstract class Practice extends SpanishMongo {
   case class State[T](totalAsked: Int = 0, wrong: Vector[(String, T)] = Vector.empty) {
     def right: State[T] = copy(totalAsked = totalAsked + 1)
     def wrong(word: String, question: T): State[T] =
@@ -19,7 +19,7 @@ trait Practice extends SpanishMongo {
 }
 
 object PracticeConjugation extends Practice {
-  def execute() = {
+  def execute(): Future[State[Seq[String]]] = {
     print(s"Cuántos verbos recientes vas a practicar? ")
     val count = StdIn.readInt()
 
@@ -86,7 +86,7 @@ object PracticeConjugation extends Practice {
 }
 
 object PracticeArticles extends Practice {
-  def execute() = {
+  def execute(): Future[State[Translation]] = {
     def isIrregularNoun(word: String, trans: Translation) = trans.speechPart match {
       case "masculine noun" => !word.endsWith("o")
       case "feminine noun" => !(word.endsWith("a") || word.endsWith("ad") || word.endsWith("ción") || word.endsWith("sión"))
@@ -157,12 +157,12 @@ object PracticeWords extends Practice {
 
   case class ChosenTranslation(wd: WordData, translation: Translation)
 
-  def execute() = {
+  def execute(): Future[PracticeWords.State[ChosenTranslation]] = {
     print(s"Cuántas palabras vas a practicar? ")
     val count = StdIn.readInt()
     val tempHash = {
       val salt = Random.nextInt
-      (wd: WordData) => wd.hashCode | salt
+      wd: WordData => wd.hashCode | salt
     }
 
     fetchWords().map(_.sortBy(wd => (wd.bucket, tempHash(wd)))).map { wordDatas =>
@@ -217,23 +217,26 @@ object PracticeWords extends Practice {
                 val newBucket =
                   if (round == 0 && wd.bucket < 4) wd.bucket + bucketChange
                   else wd.bucket
-                wordsColl.update(BSONDocument("_id" -> word), BSONDocument(
-                  "$set" -> BSONDocument("lastCorrect" -> now, "bucket" -> newBucket),
-                  "$inc" -> BSONDocument("correctCount" -> 1)
-                ))
+                wordsColl.updateOne(WordData.ref(_.word).equal(word), combine(
+                  WordData.ref(_.lastCorrect).set(Some(now)),
+                  WordData.ref(_.bucket).set(newBucket),
+                  WordData.ref(_.correctCount).inc(1)
+                )).head().failed.foreach(_.printStackTrace())
                 loop(round, totalCount, state.right, rest)
               case answer if translationsByWord.getOrElse(answer, Nil)
                 .exists(t => (t.english.toSet intersect qt.english.toSet).nonEmpty && t.baseSpeechPart == qt.baseSpeechPart) =>
                 print(s"Sí, pero... ")
                 loop(round, totalCount, state, questions, repeated = true)
-              case answer =>
+              case _ =>
+                val now = new JDate
                 val exampleText = qt.example.map(_.spanish).getOrElse("")
                 println(s"${"NO".red}: $word\n$exampleText")
                 val newBucket = 0 max (wd.bucket - bucketChange)
-                wordsColl.update(BSONDocument("_id" -> word), BSONDocument(
-                  "$set" -> BSONDocument("lastIncorrect" -> new JDate, "bucket" -> newBucket),
-                  "$inc" -> BSONDocument("incorrectCount" -> 1)
-                ))
+                wordsColl.updateOne(WordData.ref(_.word).equal(word), combine(
+                  WordData.ref(_.lastIncorrect).set(Some(now)),
+                  WordData.ref(_.bucket).set(newBucket),
+                  WordData.ref(_.incorrectCount).inc(1)
+                )).head().failed.foreach(_.printStackTrace())
                 loop(round, totalCount, state.wrong(word, ChosenTranslation(wd.copy(bucket = newBucket), qt)), rest)
             }
           case Nil if state.wrong.nonEmpty =>

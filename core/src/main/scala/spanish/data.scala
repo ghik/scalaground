@@ -3,24 +3,24 @@ package spanish
 import com.avsystem.commons._
 import com.avsystem.commons.jiop.JavaInterop._
 import com.avsystem.commons.misc.Opt
-import reactivemongo.bson.Macros.Annotations.Key
-import reactivemongo.bson.{BSONDocument, BSONDocumentReader, BSONDocumentWriter, BSONHandler, Macros}
+import com.avsystem.commons.mongo.{BsonRef, mongoId}
+import com.avsystem.commons.serialization.HasGenCodec
 
 case class WrDoc(
-  @Key("_id") word: String,
+  @mongoId word: String,
   doc: String
 )
-object WrDoc {
-  implicit val writer: BSONDocumentWriter[WrDoc] =
-    Macros.writer[WrDoc]
-  implicit val reader: BSONDocumentReader[WrDoc] =
-    Macros.reader[WrDoc]
-}
+object WrDoc extends HasGenCodec[WrDoc] with BsonRef.Creator[WrDoc]
+
+case class UnknownWord(
+  @mongoId word: String
+)
+object UnknownWord extends HasGenCodec[UnknownWord] with BsonRef.Creator[UnknownWord]
 
 case class WordData(
-  @Key("_id") word: String,
+  @mongoId word: String,
   translations: Seq[Translation],
-  conjugations: Option[AllConjugations],
+  conjugations: Option[AllConjugations] = None,
   added: JDate,
   seq: Int,
   bucket: Int = 0,
@@ -29,48 +29,37 @@ case class WordData(
   lastCorrect: Option[JDate] = None,
   lastIncorrect: Option[JDate] = None
 ) {
-  val randomizer = math.random
+  val randomizer: Double = math.random
 }
-object WordData {
-  implicit val writer: BSONDocumentWriter[WordData] =
-    Macros.writer[WordData]
-  implicit val reader: BSONDocumentReader[WordData] =
-    Macros.reader[WordData]
-}
+object WordData extends HasGenCodec[WordData] with BsonRef.Creator[WordData]
 
 case class Translation(
   dict: String,
   speechPart: String,
   context: List[String],
   english: List[String],
-  example: Option[Example],
+  example: Option[Example] = None,
   ask: Boolean = false,
   imageUrl: Option[String] = None
 ) {
-  def baseSpeechPart = speechPart.lastIndexOf(' ') match {
+  def baseSpeechPart: String = speechPart.lastIndexOf(' ') match {
     case -1 => speechPart
     case idx => speechPart.substring(idx + 1)
   }
-  def articles = speechPart match {
+  def articles: List[String] = speechPart match {
     case "masculine noun" => List("el")
     case "feminine noun" => List("la")
     case "masculine or feminine noun" => List("el", "la")
     case _ => Nil
   }
-  def meaningLine = {
+  def meaningLine: String = {
     val meanings = english.map(e => if (dict == "neodict") e.yellow else e.blue).mkString(", ")
     s"From $dict: $speechPart: (${context.mkString(", ")}) $meanings"
   }
 }
 case class Example(spanish: String, english: String)
-object Translation {
-  implicit val handler: BSONHandler[BSONDocument, Translation] =
-    Macros.handler[Translation]
-}
-object Example {
-  implicit val handler: BSONHandler[BSONDocument, Example] =
-    Macros.handler[Example]
-}
+object Translation extends HasGenCodec[Translation]
+object Example extends HasGenCodec[Example]
 
 case class ImageData(url: String, data: Array[Byte])
 
@@ -84,12 +73,7 @@ case class Conjugation(
 ) {
   def toSeq = Seq(firstSingular, secondSingular, thirdSingular, firstPlural, secondPlural, thirdPlural)
 }
-object Conjugation {
-  implicit val writer: BSONDocumentWriter[Conjugation] =
-    Macros.writer[Conjugation]
-  implicit val reader: BSONDocumentReader[Conjugation] =
-    Macros.reader[Conjugation]
-}
+object Conjugation extends HasGenCodec[Conjugation]
 case class AllConjugations(
   gerund: String,
   participle: String,
@@ -112,12 +96,7 @@ case class AllConjugations(
   subjunctivePastPerfect: Conjugation,
   subjunctiveFuturePerfect: Conjugation
 )
-object AllConjugations {
-  implicit val writer: BSONDocumentWriter[AllConjugations] =
-    Macros.writer[AllConjugations]
-  implicit val reader: BSONDocumentReader[AllConjugations] =
-    Macros.reader[AllConjugations]
-}
+object AllConjugations extends HasGenCodec[AllConjugations]
 
 
 abstract class VerbClass(endings: String*) {
@@ -136,7 +115,7 @@ object Gar extends VerbClass("gar")
 object Zar extends VerbClass("zar")
 
 sealed abstract class Person(repr: String) {
-  override def toString = repr
+  override def toString: String = repr
 }
 object Person {
   case object Yo extends Person("yo")
