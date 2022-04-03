@@ -1,18 +1,15 @@
 package russian
 
-import java.net.URLEncoder
-
 import com.avsystem.commons._
 import com.avsystem.commons.misc.Timestamp
-import com.avsystem.commons.mongo.scala.GenCodecCollection
-import com.avsystem.commons.mongo.{BsonGenCodecs, mongoId}
-import com.avsystem.commons.serialization.{GenCodec, HasGenCodec}
+import com.avsystem.commons.mongo.typed.{MongoDataCompanion, MongoEntity, MongoEntityCompanion, TypedMongoCollection}
+import com.avsystem.commons.serialization.HasGenCodec
+import com.mongodb.reactivestreams.client.{MongoClient, MongoClients, MongoDatabase}
+import monix.execution.Scheduler.Implicits.global
 import org.bson.types.ObjectId
 import org.jsoup.Jsoup
-import org.mongodb.scala.{MongoClient, MongoCollection, MongoDatabase}
 
-import scala.concurrent.Await
-import scala.concurrent.duration.Duration
+import java.net.URLEncoder
 import scala.io.Source
 
 case class PracticeState(
@@ -22,10 +19,10 @@ case class PracticeState(
   lastCorrect: Opt[Timestamp] = Opt.Empty,
   lastIncorrect: Opt[Timestamp] = Opt.Empty
 )
-object PracticeState extends HasGenCodec[PracticeState]
+object PracticeState extends MongoDataCompanion[PracticeState]
 
 case class PonsWord(
-  @mongoId id: ObjectId,
+  id: ObjectId,
   word: String,
   noaccent: String,
   added: Timestamp,
@@ -34,10 +31,8 @@ case class PonsWord(
   genus: Opt[String],
   translations: List[PonsTranslation],
   practice: PracticeState
-)
-object PonsWord extends BsonGenCodecs {
-  implicit val codec: GenCodec[PonsWord] = GenCodec.materialize
-}
+) extends MongoEntity[ObjectId]
+object PonsWord extends MongoEntityCompanion[PonsWord]
 
 case class PonsTranslation(
   source: String,
@@ -47,9 +42,10 @@ object PonsTranslation extends HasGenCodec[PonsTranslation]
 
 object Inject {
   final val CombiningAcuteAccent = "\u0301"
-  val mongoClient = MongoClient()
+  val mongoClient: MongoClient = MongoClients.create()
   val db: MongoDatabase = mongoClient.getDatabase("ruswords")
-  val coll: MongoCollection[PonsWord] = GenCodecCollection.create[PonsWord](db, "words")
+  val coll: TypedMongoCollection[PonsWord] =
+    new TypedMongoCollection[PonsWord](db.getCollection("words"))
 
   def main(args: Array[String]): Unit = {
     val baseUrl = "https://pl.pons.com/t%C5%82umaczenie/rosyjski-polski/"
@@ -85,7 +81,7 @@ object Inject {
 
       if (matchingWords.nonEmpty) matchingWords.foreach { pword =>
         println(s"Inserting $pword")
-        Await.result(coll.insertOne(pword).head(), Duration.Inf)
+        coll.insertOne(pword).runSyncUnsafe()
         Thread.sleep(500)
       } else {
         println(s"Nothing found for $searchWord")

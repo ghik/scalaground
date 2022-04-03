@@ -1,37 +1,35 @@
 package spanish
 
 import com.avsystem.commons._
-import com.avsystem.commons.jiop.JavaInterop._
-import com.avsystem.commons.misc.Opt
-import com.avsystem.commons.mongo.{BsonRef, mongoId}
-import com.avsystem.commons.serialization.HasGenCodec
+import com.avsystem.commons.misc.{Opt, Timestamp}
+import com.avsystem.commons.mongo.typed.{MongoDataCompanion, MongoEntity, MongoEntityCompanion}
 
 case class WrDoc(
-  @mongoId word: String,
+  id: String,
   doc: String
-)
-object WrDoc extends HasGenCodec[WrDoc] with BsonRef.Creator[WrDoc]
+) extends MongoEntity[String]
+object WrDoc extends MongoEntityCompanion[WrDoc]
 
 case class UnknownWord(
-  @mongoId word: String
-)
-object UnknownWord extends HasGenCodec[UnknownWord] with BsonRef.Creator[UnknownWord]
+  id: String
+) extends MongoEntity[String]
+object UnknownWord extends MongoEntityCompanion[UnknownWord]
 
 case class WordData(
-  @mongoId word: String,
+  id: String,
   translations: Seq[Translation],
   conjugations: Option[AllConjugations] = None,
-  added: JDate,
+  added: Timestamp,
   seq: Int,
   bucket: Int = 0,
   correctCount: Int = 0,
   incorrectCount: Int = 0,
-  lastCorrect: Option[JDate] = None,
-  lastIncorrect: Option[JDate] = None
-) {
-  val randomizer: Double = math.random
+  lastCorrect: Option[Timestamp] = None,
+  lastIncorrect: Option[Timestamp] = None
+) extends MongoEntity[String] {
+  val randomizer: Double = math.random()
 }
-object WordData extends HasGenCodec[WordData] with BsonRef.Creator[WordData]
+object WordData extends MongoEntityCompanion[WordData]
 
 case class Translation(
   dict: String,
@@ -57,9 +55,10 @@ case class Translation(
     s"From $dict: $speechPart: (${context.mkString(", ")}) $meanings"
   }
 }
+
 case class Example(spanish: String, english: String)
-object Translation extends HasGenCodec[Translation]
-object Example extends HasGenCodec[Example]
+object Translation extends MongoDataCompanion[Translation]
+object Example extends MongoDataCompanion[Example]
 
 case class ImageData(url: String, data: Array[Byte])
 
@@ -73,7 +72,7 @@ case class Conjugation(
 ) {
   def toSeq = Seq(firstSingular, secondSingular, thirdSingular, firstPlural, secondPlural, thirdPlural)
 }
-object Conjugation extends HasGenCodec[Conjugation]
+object Conjugation extends MongoDataCompanion[Conjugation]
 case class AllConjugations(
   gerund: String,
   participle: String,
@@ -96,8 +95,7 @@ case class AllConjugations(
   subjunctivePastPerfect: Conjugation,
   subjunctiveFuturePerfect: Conjugation
 )
-object AllConjugations extends HasGenCodec[AllConjugations]
-
+object AllConjugations extends MongoDataCompanion[AllConjugations]
 
 abstract class VerbClass(endings: String*) {
   def unapply(verb: String): Opt[String] =

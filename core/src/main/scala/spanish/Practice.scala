@@ -1,12 +1,14 @@
 package spanish
 
 import com.avsystem.commons._
-import com.avsystem.commons.jiop.JavaInterop._
-import com.avsystem.commons.mongo.core.ops.Updating._
-import org.apache.commons.lang3.time.{DateFormatUtils, DateUtils}
+import com.avsystem.commons.misc.Timestamp
+import monix.eval.Task
+import monix.execution.Scheduler.Implicits.global
 import spanish.Form._
 
+import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
+import scala.concurrent.duration._
 import scala.io.StdIn
 import scala.util.Random
 
@@ -19,14 +21,14 @@ abstract class Practice extends SpanishMongo {
 }
 
 object PracticeConjugation extends Practice {
-  def execute(): Future[State[Seq[String]]] = {
+  def execute(): Task[State[Seq[String]]] = {
     print(s"Cuántos verbos recientes vas a practicar? ")
     val count = StdIn.readInt()
 
     allVerbData.map { verbDatas =>
       val rand = new Random
       val questions = verbDatas.iterator.take(count).flatMap { wd =>
-        val verb = wd.word
+        val verb = wd.id
         val conjs = wd.conjugations.get
         def mkQuestions(conj: Conjugation, form: Person => Form, hint: String) =
           (conj.toSeq.map(_.split(",").toSeq) zip Person.Values).filter {
@@ -86,7 +88,7 @@ object PracticeConjugation extends Practice {
 }
 
 object PracticeArticles extends Practice {
-  def execute(): Future[State[Translation]] = {
+  def execute(): Task[State[Translation]] = {
     def isIrregularNoun(word: String, trans: Translation) = trans.speechPart match {
       case "masculine noun" => !word.endsWith("o")
       case "feminine noun" => !(word.endsWith("a") || word.endsWith("ad") || word.endsWith("ción") || word.endsWith("sión"))
@@ -103,11 +105,11 @@ object PracticeArticles extends Practice {
 
       val translationsByWord = wordDatas.map { wd =>
         wd.translations.filter(t => article.isDefinedAt(t.speechPart))
-          .groupBy(t => s"${article(t.speechPart)} ${wd.word}")
+          .groupBy(t => s"${article(t.speechPart)} ${wd.id}")
       }.reduce(_ ++ _)
 
       val questions = wordDatas.flatMap { wd =>
-        wd.translations.filter(_.ask).map(t => (wd.word, t)).filter((isIrregularNoun _).tupled)
+        wd.translations.filter(_.ask).map(t => (wd.id, t)).filter((isIrregularNoun _).tupled)
       }.toArray
       shuffle(questions)
 
@@ -149,29 +151,31 @@ object PracticeArticles extends Practice {
 
 object PracticeWords extends Practice {
   val bucketChange = 1
-  val minIntervalHours = 2
-  val maxLastCorrect: JDate =
-    (DateFormatUtils.ISO_DATE_FORMAT.parse("2020-01-01"), DateUtils.addHours(new JDate, -minIntervalHours)) |> {
-      case (d1, d2) => if (d1 before d2) d1 else d2
-    }
+  val minInterval: FiniteDuration = 2.hours
+
+  val maxLastCorrect: Timestamp = {
+    val d1 = Timestamp.parse("2020-01-01")
+    val d2 = Timestamp.now() - minInterval
+    if (d1 < d2) d1 else d2
+  }
 
   case class ChosenTranslation(wd: WordData, translation: Translation)
 
-  def execute(): Future[PracticeWords.State[ChosenTranslation]] = {
+  def execute(): Task[PracticeWords.State[ChosenTranslation]] = {
     print(s"Cuántas palabras vas a practicar? ")
     val count = StdIn.readInt()
     val tempHash = {
-      val salt = Random.nextInt
+      val salt = Random.nextInt()
       wd: WordData => wd.hashCode | salt
     }
 
     fetchWords().map(_.sortBy(wd => (wd.bucket, tempHash(wd)))).map { wordDatas =>
-      val translationsByWord = wordDatas.iterator.map(wd => (wd.word, wd.translations)).toMap
+      val translationsByWord = wordDatas.iterator.map(wd => (wd.id, wd.translations)).toMap
       val rand = new Random
       val questions = wordDatas.iterator.filter {
-        wd => wd.lastCorrect.forall(_.before(maxLastCorrect))
+        wd => wd.lastCorrect.forall(_ < maxLastCorrect)
       }.flatMap { wd =>
-        val word = wd.word
+        val word = wd.id
         val translations = wd.translations
         // t.english.exists(isEasyTranslation(_, word))
         translations.filter(t => t.ask && t.english.nonEmpty)
@@ -186,14 +190,15 @@ object PracticeWords extends Practice {
         }
       println(s"Bucket statistics: ${bucketStats.mkString(",")}")
 
-      def loop(
+      @tailrec def loop(
         round: Int,
         totalCount: Int,
         state: State[ChosenTranslation],
         questions: List[(String, ChosenTranslation)],
-        repeated: Boolean = false): State[ChosenTranslation] = {
+        repeated: Boolean,
+      ): State[ChosenTranslation] = {
 
-        def wrongQuestionsToRepeat = {
+        def wrongQuestionsToRepeat: List[(String, ChosenTranslation)] = {
           val State(total, wrong) = state
           println(s"Has practicado $total palabras, ${wrong.size} incorrectas (${(total - wrong.size) * 100.0 / total}%)")
           val newQuestions = state.wrong.toArray
@@ -209,45 +214,51 @@ object PracticeWords extends Practice {
               print(s"(${state.totalAsked + 1}/$totalCount) ${qt.speechPart}: (${qt.context.mkString(", ")}) ${qt.english.map(_.green).mkString(", ")} ")
             }
             StdIn.readLine() match {
-              case "." => loop(round, wrongQuestionsToRepeat.size, State(), wrongQuestionsToRepeat)
+              case "." => loop(round, wrongQuestionsToRepeat.size, State(), wrongQuestionsToRepeat, repeated = false)
               case `word` =>
                 val exampleText = qt.example.map(_.spanish).map(": " + _).getOrElse("")
                 println(s"Sí$exampleText")
-                val now = new JDate
+                val now = Timestamp.now()
                 val newBucket =
                   if (round == 0 && wd.bucket < 4) wd.bucket + bucketChange
                   else wd.bucket
-                wordsColl.updateOne(WordData.ref(_.word).equal(word), combine(
-                  WordData.ref(_.lastCorrect).set(Some(now)),
-                  WordData.ref(_.bucket).set(newBucket),
-                  WordData.ref(_.correctCount).inc(1)
-                )).head().failed.foreach(_.printStackTrace())
-                loop(round, totalCount, state.right, rest)
+
+                wordsColl.updateOne(
+                  WordData.ref(_.id).is(word),
+                  WordData.ref(_.lastCorrect).set(Some(now)) &&
+                    WordData.ref(_.bucket).set(newBucket) &&
+                    WordData.ref(_.correctCount).inc(1)
+                ).runSyncUnsafe()
+
+                loop(round, totalCount, state.right, rest, repeated = false)
               case answer if translationsByWord.getOrElse(answer, Nil)
                 .exists(t => (t.english.toSet intersect qt.english.toSet).nonEmpty && t.baseSpeechPart == qt.baseSpeechPart) =>
                 print(s"Sí, pero... ")
                 loop(round, totalCount, state, questions, repeated = true)
               case _ =>
-                val now = new JDate
+                val now = Timestamp.now()
                 val exampleText = qt.example.map(_.spanish).getOrElse("")
                 println(s"${"NO".red}: $word\n$exampleText")
                 val newBucket = 0 max (wd.bucket - bucketChange)
-                wordsColl.updateOne(WordData.ref(_.word).equal(word), combine(
-                  WordData.ref(_.lastIncorrect).set(Some(now)),
-                  WordData.ref(_.bucket).set(newBucket),
-                  WordData.ref(_.incorrectCount).inc(1)
-                )).head().failed.foreach(_.printStackTrace())
-                loop(round, totalCount, state.wrong(word, ChosenTranslation(wd.copy(bucket = newBucket), qt)), rest)
+
+                wordsColl.updateOne(
+                  WordData.ref(_.id).is(word),
+                  WordData.ref(_.lastIncorrect).set(Some(now)) &&
+                    WordData.ref(_.bucket).set(newBucket) &&
+                    WordData.ref(_.incorrectCount).inc(1)
+                ).runSyncUnsafe()
+
+                val newTranslation = ChosenTranslation(wd.copy(bucket = newBucket), qt)
+                loop(round, totalCount, state.wrong(word, newTranslation), rest, repeated = false)
             }
           case Nil if state.wrong.nonEmpty =>
-            loop(round + 1, wrongQuestionsToRepeat.size, State(), wrongQuestionsToRepeat)
+            loop(round + 1, wrongQuestionsToRepeat.size, State(), wrongQuestionsToRepeat, repeated = false)
           case _ =>
             state
         }
       }
 
-      loop(0, questions.length, State(), questions.toList)
+      loop(0, questions.length, State(), questions.toList, repeated = false)
     }
   }
 }
-

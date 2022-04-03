@@ -1,28 +1,26 @@
 package spanish
 
-import java.awt.image.BufferedImage
-import java.io.{ByteArrayInputStream, ByteArrayOutputStream, FileWriter, PrintWriter}
-import java.net.{URL, URLEncoder}
-import java.util.concurrent.Executors
-
 import com.avsystem.commons._
-import com.avsystem.commons.misc.Opt
-import com.avsystem.commons.mongo.scala.GenCodecCollection
+import com.avsystem.commons.misc.{Opt, Timestamp}
+import com.avsystem.commons.mongo.typed.{MongoEntity, MongoEntityMeta, TypedMongoCollection}
+import com.avsystem.commons.serialization.json.JsonStringInput
+import com.avsystem.commons.serialization.{HasGenCodec, name}
 import com.google.common.io.ByteStreams
-import javax.imageio.ImageIO
-import javax.swing._
-import org.bson.BsonDocument
+import com.mongodb.reactivestreams.client.{MongoClient, MongoClients, MongoDatabase}
+import monix.eval.Task
+import monix.execution.Scheduler.Implicits.global
 import org.imgscalr.Scalr
 import org.imgscalr.Scalr.Mode.{FIT_TO_HEIGHT, FIT_TO_WIDTH}
 import org.jsoup.Jsoup
 import org.jsoup.nodes.{Document, Element}
-import org.mongodb.scala.model.{Projections, ReplaceOptions}
-import org.mongodb.scala.{MongoClient, MongoCollection, MongoDatabase}
-import upickle.Js
 
+import java.awt.image.BufferedImage
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream, FileWriter, PrintWriter}
+import java.net.{URL, URLEncoder}
+import javax.imageio.ImageIO
+import javax.swing._
 import scala.collection.mutable.ListBuffer
-import scala.concurrent.duration.Duration
-import scala.concurrent.{Await, ExecutionContext, ExecutionContextExecutorService, Future}
+import scala.concurrent.blocking
 import scala.io.{Source, StdIn}
 import scala.util.Random
 
@@ -151,14 +149,9 @@ trait RegularConjugations {
   }
 }
 
-abstract class Spanish extends RegularConjugations {
-  this: SpanishMongo =>
+abstract class Spanish extends RegularConjugations { this: SpanishMongo =>
   val ParticipleLabel = "Participle: "
   val VowelStemEndings = Set('a', 'o', 'e')
-
-  implicit class FutureOps[A](fut: Future[A]) {
-    def await: A = Await.result(fut, Duration.Inf)
-  }
 
   def participle(verb: String): String = {
     val body = Jsoup.connect(s"http://www.spanishdict.com/conjugate/$verb").get.body
@@ -261,7 +254,7 @@ abstract class Spanish extends RegularConjugations {
                           }
 
                         val fixedPartOfSpeech = partOfSpeech match {
-                          case "noun" => wordReferenceSpeechPart(spanish, wordReference(spanish).await) getOrElse "noun"
+                          case "noun" => wordReferenceSpeechPart(spanish, wordReference(spanish).runSyncUnsafe()) getOrElse "noun"
                           case _ => partOfSpeech
                         }
 
@@ -281,7 +274,7 @@ abstract class Spanish extends RegularConjugations {
       variants += escapedSpanish.stripSuffix("se")
     }
 
-    variants.toStream
+    variants.view
       .map(variant => parseDoc(Jsoup.connect(s"http://www.spanishdict.com/translate/$variant").get))
       .find(_.nonEmpty).getOrElse(Nil)
   }
@@ -378,67 +371,65 @@ abstract class Spanish extends RegularConjugations {
     SwingUtilities.invokeLater(jRunnable(code))
 }
 
-abstract class SpanishMongo extends Spanish {
-  import com.avsystem.commons.mongo.core.ops.Sorting._
+case class RgMeta(@name("ou") imgurl: String)
+object RgMeta extends HasGenCodec[RgMeta]
 
-  val mongoClient: MongoClient = MongoClient()
+abstract class SpanishMongo extends Spanish {
+
+  val mongoClient: MongoClient = MongoClients.create()
   val db: MongoDatabase = mongoClient.getDatabase("words")
 
-  val wordsColl: MongoCollection[WordData] = GenCodecCollection.create(db, "words")
-  val unknownWordsColl: MongoCollection[UnknownWord] = GenCodecCollection.create(db, "unknownWords")
-  val wrDocs: MongoCollection[WrDoc] = GenCodecCollection.create(db, "wrdocs")
+  val wordsColl: TypedMongoCollection[WordData] = new TypedMongoCollection(db.getCollection("words"))
+  val unknownWordsColl: TypedMongoCollection[UnknownWord] = new TypedMongoCollection(db.getCollection("unknownWords"))
+  val wrDocs: TypedMongoCollection[WrDoc] = new TypedMongoCollection(db.getCollection("wrdocs"))
 
-  implicit def ec: ExecutionContext = ExecutionContext.Implicits.global
-  val blockingExecutionContext: ExecutionContextExecutorService = ExecutionContext.fromExecutorService(Executors.newCachedThreadPool)
+  def fetchWords(): Task[Seq[WordData]] =
+    wordsColl.find().toListL
 
-  def fetchWords(): Future[Seq[WordData]] =
-    wordsColl.find().collect().head()
+  def allVerbData: Task[Seq[WordData]] =
+    wordsColl.find(
+      WordData.ref(_.conjugations).exists(true),
+      sort = WordData.ref(_.added).ascending.andThenAscendingBy(WordData.ref(_.seq))
+    ).toListL
 
-  def allVerbData: Future[Seq[WordData]] =
-    wordsColl.find(WordData.ref(_.conjugations).exists(true))
-      .sort(descending(WordData.ref(_.added), WordData.ref(_.seq)))
-      .collect().head()
+  def loadImageData(url: String): Task[Option[Array[Byte]]] =
+    Task(blocking(ByteStreams.toByteArray(new URL(url).openStream())))
+      .map(bytes => if (ImageIO.read(new ByteArrayInputStream(bytes)) != null) Some(bytes) else None)
 
-  def loadImageData(url: String): Future[Option[Array[Byte]]] =
-    Future(ByteStreams.toByteArray(new URL(url).openStream()))(blockingExecutionContext)
-      .filter(bytes => ImageIO.read(new ByteArrayInputStream(bytes)) != null)
-      .map(Option(_)).recover({ case _ => None })
-
-  def execute(): Future[_]
+  def execute(): Task[_]
 
   def loadImageUrls(word: String): Vector[String] = {
     val url = s"https://www.google.pl/search?q=$word&tbm=isch"
     val doc = Jsoup.connect(url)
       .header("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:45.0) Gecko/20100101 Firefox/45.0").get
-    doc.getElementsByClass("rg_meta").iterator.asScala.map(_.ownText).map(upickle.json.read)
-      .flatMap {
-        case obj: Js.Obj => obj.value.toMap.get("ou")
-        case _ => None
-      }
-      .collect({ case Js.Str(imgurl) => imgurl })
+
+    doc.getElementsByClass("rg_meta")
+      .iterator.asScala.map(_.ownText)
+      .flatMap(s => Try(JsonStringInput.read[RgMeta](s)).toOption)
+      .map(_.imgurl)
       .toVector
   }
 
-  def wordReference(word: String): Future[Document] =
-    wrDocs.find(WrDoc.ref(_.word).equal(word)).headOption().flatMap {
+  def wordReference(word: String): Task[Document] =
+    wrDocs.findOne(WrDoc.ref(_.id).is(word)).flatMap {
       case Some(WrDoc(_, doc)) =>
-        Future.successful(Jsoup.parse(doc))
+        Task(Jsoup.parse(doc))
       case None =>
         val url = s"http://www.wordreference.com/es/en/translation.asp?spen=${URLEncoder.encode(word, "UTF-8")}"
         val doc = Jsoup.connect(url).get()
         val docHtml = doc.outerHtml
         if (docHtml.contains("WordReference is receiving too many requests from your IP address"))
           throw new Exception("overload")
-        wrDocs.insertOne(WrDoc(word, docHtml)).head().mapNow(_ => doc)
+        wrDocs.insertOne(WrDoc(word, docHtml)).as(doc)
     }
 
   def main(args: Array[String]): Unit =
-    try execute().await finally mongoClient.close()
+    try execute().runSyncUnsafe() finally mongoClient.close()
 }
 
 object ImageChoiceUI extends JFrame {
   val ImageSize = 300
-  setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE)
+  //  setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE)
   setLocation(200, 200)
 
   final class ImageLabel extends JLabel {
@@ -466,58 +457,61 @@ object ImageChoiceUI extends JFrame {
 }
 
 object Inject extends SpanishMongo {
-  def execute(): Future[_] = {
+  def execute(): Task[Unit] = {
     val words = Source.fromFile("/home/ghik/Dropbox/espaniol/palabrasdb.txt")
       .getLines().map(_.trim).filter(_.nonEmpty).filterNot(_.startsWith("-")).map(stripArticle)
       .toSeq.distinct
 
-    def allIds(coll: MongoCollection[_]): Future[Seq[String]] =
-      coll.find[BsonDocument]().projection(Projections.include("_id")).collect()
-        .head().mapNow(_.map(_.getString("_id").getValue))
+    def allIds[E <: MongoEntity[String] : MongoEntityMeta](coll: TypedMongoCollection[E]): Task[Seq[String]] =
+      coll.find(projection = MongoEntityMeta[E].idRef).toListL
 
     val alreadyPresent = {
       for {
         known <- allIds(wordsColl)
         unknown <- allIds(unknownWordsColl)
       } yield known ++ unknown
-    }.await
+    }.runSyncUnsafe()
 
-    val now = new JDate
+    val now = Timestamp.now()
     val wordsToInsert = words.iterator
       .filter(w => w.startsWith("+") || !alreadyPresent.contains(w)).map(_.stripPrefix("+")).toVector
-    val results = wordsToInsert.iterator.zipWithIndex.map { case (word, seq) =>
-      val rawTranslations = englishMeanings(word.toLowerCase)
-      if (rawTranslations.nonEmpty) {
-        println(s"${seq + 1}/${wordsToInsert.size} ${word.magenta}")
-        println(rawTranslations.iterator.zipWithIndex.map {
-          case (trans, i) =>
-            s"${i + 1}. ${trans.meaningLine}" +
-              trans.example.map(e => s"\n   ${e.english}\n   ${e.spanish}").getOrElse("")
-        }.mkString("\n"))
-        val indicesToAsk = StdIn.readLine("translations to ask for: ").split(",").iterator
-          .map(_.trim).filter(_.nonEmpty).map(_.toInt).toSet
-        if (indicesToAsk.nonEmpty) {
-          val translations = rawTranslations.zipWithIndex.map { case (t, i) =>
-            t.copy(ask = indicesToAsk.contains(i + 1))
+
+    val results: Iterable[Task[Object]] = wordsToInsert.view.zipWithIndex
+      .map { case (word, seq) =>
+        val rawTranslations = englishMeanings(word.toLowerCase)
+        if (rawTranslations.nonEmpty) {
+          println(s"${seq + 1}/${wordsToInsert.size} ${word.magenta}")
+          println(rawTranslations.iterator.zipWithIndex.map {
+            case (trans, i) =>
+              s"${i + 1}. ${trans.meaningLine}" +
+                trans.example.map(e => s"\n   ${e.english}\n   ${e.spanish}").getOrElse("")
+          }.mkString("\n"))
+
+          val indicesToAsk = StdIn.readLine("translations to ask for: ").split(",").iterator
+            .map(_.trim).filter(_.nonEmpty).map(_.toInt).toSet
+
+          if (indicesToAsk.nonEmpty) {
+            val translations = rawTranslations.zipWithIndex.map { case (t, i) =>
+              t.copy(ask = indicesToAsk.contains(i + 1))
+            }
+            val conjugations =
+              if (translations.exists(_.baseSpeechPart == "verb"))
+                loadConjugations(word).toOption
+              else None
+            wordsColl.replaceOne(
+              WordData.ref(_.id).is(word),
+              WordData(word, translations, conjugations, now, seq),
+              upsert = true,
+            )
+          } else {
+            unknownWordsColl.insertOne(UnknownWord(word))
           }
-          val conjugations =
-            if (translations.exists(_.baseSpeechPart == "verb"))
-              loadConjugations(word).toOption
-            else None
-          wordsColl.replaceOne(
-            WordData.ref(_.word).equal(word),
-            WordData(word, translations, conjugations, now, seq),
-            ReplaceOptions().upsert(true)
-          )
         } else {
+          println(s"NO TRANSLATIONS FOR $word FOUND")
           unknownWordsColl.insertOne(UnknownWord(word))
         }
-      } else {
-        println(s"NO TRANSLATIONS FOR $word FOUND")
-        unknownWordsColl.insertOne(UnknownWord(word))
       }
-    }
 
-    Future.traverse(results)(_.head())
+    Task.sequence(results).void
   }
 }
