@@ -22,7 +22,7 @@ import javax.swing._
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.blocking
 import scala.io.{Source, StdIn}
-import scala.util.Random
+import scala.util.{Random, Using}
 
 trait RegularConjugations {
 
@@ -174,6 +174,7 @@ abstract class Spanish extends RegularConjugations { this: SpanishMongo =>
 
   def article(word: String): _root_.com.avsystem.commons.Opt[String] =
     articles.find(a => word.startsWith(a + " ")).toOpt
+
   def stripArticle(word: String): String =
     article(word).map(a => word.stripPrefix(a + " ")).getOrElse(word)
 
@@ -372,12 +373,13 @@ abstract class Spanish extends RegularConjugations { this: SpanishMongo =>
 }
 
 case class RgMeta(@name("ou") imgurl: String)
+
 object RgMeta extends HasGenCodec[RgMeta]
 
 abstract class SpanishMongo extends Spanish {
 
   val mongoClient: MongoClient = MongoClients.create()
-  val db: MongoDatabase = mongoClient.getDatabase("words")
+  val db: MongoDatabase = mongoClient.getDatabase("spanish")
 
   val wordsColl: TypedMongoCollection[WordData] = new TypedMongoCollection(db.getCollection("words"))
   val unknownWordsColl: TypedMongoCollection[UnknownWord] = new TypedMongoCollection(db.getCollection("unknownWords"))
@@ -458,9 +460,11 @@ object ImageChoiceUI extends JFrame {
 
 object Inject extends SpanishMongo {
   def execute(): Task[Unit] = {
-    val words = Source.fromFile("/home/ghik/Dropbox/espaniol/palabrasdb.txt")
-      .getLines().map(_.trim).filter(_.nonEmpty).filterNot(_.startsWith("-")).map(stripArticle)
-      .toSeq.distinct
+    val category = "colores"
+    val words = Using.resource(Source.fromFile(s"/Users/rjghik/Dropbox/espaniol/$category.txt")) { s =>
+      s.getLines().map(_.trim).filter(_.nonEmpty).filterNot(_.startsWith("-")).map(stripArticle)
+        .toSeq.distinct
+    }
 
     def allIds[E <: MongoEntity[String] : MongoEntityMeta](coll: TypedMongoCollection[E]): Task[Seq[String]] =
       coll.find(projection = MongoEntityMeta[E].idRef).toListL
@@ -500,7 +504,7 @@ object Inject extends SpanishMongo {
               else None
             wordsColl.replaceOne(
               WordData.ref(_.id).is(word),
-              WordData(word, translations, conjugations, now, seq),
+              WordData(word, List(category), translations, conjugations, now, seq),
               upsert = true,
             )
           } else {

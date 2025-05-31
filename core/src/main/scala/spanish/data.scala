@@ -17,6 +17,7 @@ object UnknownWord extends MongoEntityCompanion[UnknownWord]
 
 case class WordData(
   id: String,
+  categories: Seq[String] = Nil,
   translations: Seq[Translation],
   conjugations: Option[AllConjugations] = None,
   added: Timestamp,

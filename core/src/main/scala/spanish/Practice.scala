@@ -154,7 +154,7 @@ object PracticeWords extends Practice {
   val minInterval: FiniteDuration = 2.hours
 
   val maxLastCorrect: Timestamp = {
-    val d1 = Timestamp.parse("2020-01-01")
+    val d1 = Timestamp.parse("2020-01-01T00:00:00.000Z")
     val d2 = Timestamp.now() - minInterval
     if (d1 < d2) d1 else d2
   }

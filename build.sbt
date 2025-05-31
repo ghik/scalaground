@@ -3,7 +3,7 @@ import sbt.Keys.version
 inThisBuild(Seq(
   name := "scalaground",
   version := "1.0",
-  scalaVersion := "2.13.14",
+  scalaVersion := "2.13.16",
   resolvers ++= Resolver.sonatypeOssRepos("releases"),
 
   Compile / scalacOptions ++= Seq(
@@ -39,14 +39,14 @@ lazy val core = project.dependsOn(macros).settings(
     "org.scala-lang" % "scala-reflect" % scalaVersion.value,
     "org.scala-lang" % "scala-compiler" % scalaVersion.value,
 
-    "com.avsystem.commons" %% "commons-core" % "2.16.0",
-    "com.avsystem.commons" %% "commons-mongo" % "2.16.0",
-    "org.mongodb" % "mongodb-driver-reactivestreams" % "5.1.0",
-    "com.google.guava" % "guava" % "31.1-jre",
-    "org.apache.commons" % "commons-lang3" % "3.14.0",
-    "org.jsoup" % "jsoup" % "1.17.2",
-    "org.slf4j" % "slf4j-api" % "2.0.12",
+    "com.avsystem.commons" %% "commons-core" % "2.22.0",
+    "com.avsystem.commons" %% "commons-mongo" % "2.22.0",
+    "org.mongodb" % "mongodb-driver-reactivestreams" % "5.5.0",
+    "com.google.guava" % "guava" % "33.4.8-jre",
+    "org.apache.commons" % "commons-lang3" % "3.17.0",
+    "org.jsoup" % "jsoup" % "1.20.1",
+    "org.slf4j" % "slf4j-api" % "2.0.17",
     "org.imgscalr" % "imgscalr-lib" % "4.2",
-    "org.scalatest" %% "scalatest" % "3.2.18" % Test
+    "org.scalatest" %% "scalatest" % "3.2.19" % Test
   )
 )
